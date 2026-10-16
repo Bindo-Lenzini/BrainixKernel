@@ -1,0 +1,25 @@
+# Сборка
+build/
+
+# Генерируемые QEMU-диски и дампы
+disk.img
+media.img
+net.pcap
+qemu.log
+
+# Мусор от скриптов и случайных редиректов
+=
+
+# Бэкапы от ручных правок
+*.orig
+*.bak
+
+# macOS
+.DS_Store
+
+# Дампы всего исходника (не путать с самим исходником)
+BrainixKernel_all_code.txt
+BrainixKernel_contents.txt
+
+# Внешние образы (не нужны для сборки)
+alpine-virt-aarch64.iso

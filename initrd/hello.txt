@@ -1,0 +1,2 @@
+Hello, world!
+This file lives inside the kernel image.
