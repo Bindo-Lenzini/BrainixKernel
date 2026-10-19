@@ -1,6 +1,8 @@
 BrainixKernel (BKOS)
 ====================
 
+[![build](https://github.com/Bindo-Lenzini/BrainixKernel/actions/workflows/build.yml/badge.svg)](https://github.com/Bindo-Lenzini/BrainixKernel/actions/workflows/build.yml)
+
 BrainixKernel is a small hobby kernel for AArch64 (ARMv8-A), written in C and
 assembly without the C standard library. This is the headless edition: there is
 no graphics stack, the console is the PL011 serial port.
@@ -68,21 +70,25 @@ Repository layout
 Who are you?
 ------------
 
-New kernel developer
-    Start with kernel.c: the boot sequence is in kernel_main(), and the
-    interrupt path is in irq_handler().
+### New kernel developer
 
-Networking developer
-    The stack is layered: virtio_net.c -> net.c -> arp.c / ifnet.c ->
-    ip -> icmp.c / udp.c / tcp.c -> socket.c.
+Start with `src/kernel.c`: the boot sequence is in `kernel_main()`, and the
+interrupt path is in `irq_handler()`.
 
-Driver author
-    Devices are found through the device tree (dtb.c) and PCI ECAM (pci.c).
-    virtio_net.c and blk.c show the current pattern.
+### Networking developer
 
-User program author
-    Copy one of user/*.c, add its name to USER_PROGS in the Makefile, and it
-    is packed into the initrd automatically.
+The stack is layered: `virtio_net.c` -> `net.c` -> `arp.c` / `ifnet.c` ->
+IP -> `icmp.c` / `udp.c` / `tcp.c` -> `socket.c`.
+
+### Driver author
+
+Devices are found through the device tree (`dtb.c`) and PCI ECAM (`pci.c`).
+`virtio_net.c` and `blk.c` show the current pattern.
+
+### User program author
+
+Copy one of `user/*.c`, add its name to `USER_PROGS` in the `Makefile`, and it
+is packed into the initrd automatically.
 
 Status
 ------
