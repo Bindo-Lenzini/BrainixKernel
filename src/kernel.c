@@ -552,7 +552,7 @@ uint64_t irq_handler(uint64_t sp) {
         kbd_poll();
         mouse_poll();
         net_poll();
-        vnc_poll();
+        // vnc_poll();
 
 
         if (g_ui_ready) {
@@ -994,7 +994,7 @@ void kernel_main(uint64_t dtb) {
     uart_puts("  >> ICMP ping test active <<\n");
 
     uart_puts("[vnc] Connecting to 10.0.2.2:5901...\n");
-    vnc_connect((const uint8_t[]){10,0,2,2}, 5901);
+    // vnc_connect((const uint8_t[]){10,0,2,2}, 5901);
     sched_start();
     panic("sched_start returned");
 }
