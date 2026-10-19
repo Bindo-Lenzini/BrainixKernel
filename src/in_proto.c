@@ -1,3 +1,4 @@
+#pragma clang diagnostic ignored "-Wunused-parameter"
 #include "protosw.h"
 #include "socket.h"
 #include "tcp.h"
@@ -71,10 +72,10 @@ int proto_tcp_recv(void *ctx, void *buf, int max_len, struct sockaddr *from) {
     task_fd_t *f = (task_fd_t *)ctx;
     tcp_conn_t *c = tcp_get(f->tcp_idx);
     if (!c || c->rx_len == 0) return 0;
-    int copy_len = c->rx_len > max_len ? max_len : c->rx_len;
+    int copy_len = (int)c->rx_len > max_len ? max_len : (int)c->rx_len;
     uint8_t *dst = (uint8_t *)buf;
     for (int i = 0; i < copy_len; i++) dst[i] = c->rx_buf[i];
-    for (int i = copy_len; i < c->rx_len; i++) c->rx_buf[i - copy_len] = c->rx_buf[i];
+    for (int i = copy_len; i < (int)c->rx_len; i++) c->rx_buf[i - copy_len] = c->rx_buf[i];
     c->rx_len -= copy_len;
     
     struct sockaddr_in *sin = (struct sockaddr_in *)from;

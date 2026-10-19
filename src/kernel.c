@@ -959,10 +959,8 @@ void kernel_main(uint64_t dtb) {
     task_t *b = task_create("B", task_printer_b);
     uint64_t echo_size = (uint64_t)(user_echo_end - user_echo_start);
     uint64_t u_size    = (uint64_t)(user_print_u_end - user_print_u_start);
-    uint64_t f_size    = (uint64_t)(user_fault_end - user_fault_start);
     task_t *u1 = task_create_user("U1", user_echo_start, echo_size);
     task_t *u2 = task_create_user("U2", user_print_u_start, u_size);
-    task_t *uf = 0;
     if (!a || !b || !u1 || !u2 ) panic("task_create failed");
 
     // User-space shell: sh.elf. Запускаем как U-shell (stdin/stdout через UART).
