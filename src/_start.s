@@ -107,7 +107,6 @@
 
 // ============================================================
 _start:
-    PUTC 49                     // '1'
     mov  x19, x0                // save DTB PA
 
     mrs x0, CurrentEL
@@ -116,7 +115,6 @@ _start:
     b.lt el1_boot
 
     // EL2 → EL1 drop.
-    PUTC 50                     // '2'
     mov x0, #0x80000000
     msr hcr_el2, x0
     mov x0, #3
@@ -129,17 +127,14 @@ _start:
     eret
 
 el1_boot:
-    PUTC 51                     // '3'
     msr daifset, #0xF
 
     // Временный стек в .boot (low VA). Используется только до
     // момента входа в high_entry.
     adr x0, boot_stack_top
     mov sp, x0
-    PUTC 52                     // '4'
 
     bl  boot_mmu_setup
-    PUTC 53                     // '5'
 
     ldr x0, =high_entry
     br  x0
@@ -213,7 +208,6 @@ boot_l1:
 .section .text, "ax"
 
 high_entry:
-    PUTC 54                     // '6' — PC на high VA, SP ещё low!
 
     // *** КРИТИЧНО ***
     // Переключаем SP на high VA стек из .stack (linker.ld).
@@ -224,7 +218,6 @@ high_entry:
     // Data Abort.
     ldr x0, =__stack_top
     mov sp, x0
-    PUTC 83                     // 'S' — SP переключён на high VA
 
     ldr x0, =exception_vectors
     msr vbar_el1, x0
@@ -239,24 +232,17 @@ high_entry:
     str x2, [x0], #8
     b 1b
 2:
-    PUTC 55                     // '7' — BSS cleared
 
     msr daifclr, #0xF
 
-    PUTC 56                     // '8' — перед mmu_init
 
     bl  mmu_init
     // После этой точки TTBR0 = l0_empty. Low VA MMIO недоступен.
     // SP уже high VA — все push/pop работают через TTBR1.
 
-    PUTCH 57                    // '9' — после mmu_init
-    PUTCH 10                    // '\n' — разделитель
 
-    PUTCH 88                    // 'X'
     mov x0, x19
-    PUTCH 89                    // 'Y'
     ldr x1, =kernel_main
-    PUTCH 90                    // 'Z'
     ldr x1, =kernel_main        // перезагрузка x1 (PUTCH клобберит x1)
     br  x1
 
