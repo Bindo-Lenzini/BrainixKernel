@@ -13,6 +13,7 @@ typedef enum {
     WND_FILES,
     WND_PERSONALIZE,
     WND_ABOUT,
+    WND_VNC,
 } wnd_type_t;
 
 typedef struct {

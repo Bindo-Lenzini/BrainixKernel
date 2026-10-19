@@ -111,6 +111,7 @@ int tcp_handle_ipv4(const uint8_t *iph, uint32_t ip_total_len) {
     const uint8_t *tcph = iph + ihl;
     uint16_t src_port = ((uint16_t)tcph[0] << 8) | tcph[1];
     uint16_t dst_port = ((uint16_t)tcph[2] << 8) | tcph[3];
+    (void)dst_port;
 
     uint32_t seq = ((uint32_t)tcph[4] << 24) | ((uint32_t)tcph[5] << 16) |
                    ((uint32_t)tcph[6] << 8)  | (uint32_t)tcph[7];

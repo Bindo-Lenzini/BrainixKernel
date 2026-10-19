@@ -255,9 +255,9 @@ int net_send_tcp(const uint8_t src_ip[4], uint16_t src_port,
     tcph[9]  = (ack >> 16) & 0xFF;
     tcph[10] = (ack >> 8)  & 0xFF;
     tcph[11] = (ack)       & 0xFF;
-    // data offset = 5 слов (20 байт) + payload_len/4 слов опций.
-    uint8_t do_words = 5 + (uint8_t)(payload_len / 4);
-    tcph[12] = (uint8_t)(do_words << 4);
+    // Data offset = 5 words (20 bytes TCP header, no options).
+    // payload НЕ входит в data offset — это размер заголовка.
+    tcph[12] = 0x50;
     tcph[13] = flags;
     tcph[14] = 0xFF; tcph[15] = 0xFF;   // window = 65535
     tcph[16] = 0; tcph[17] = 0;         // checksum (заполним)

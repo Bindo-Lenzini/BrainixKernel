@@ -60,6 +60,9 @@ C_SOURCES := \
     $(SRC_DIR)/syscall.c \
     $(SRC_DIR)/pipe.c \
     $(SRC_DIR)/socket.c \
+    $(SRC_DIR)/protosw.c \
+    $(SRC_DIR)/in_proto.c \
+    $(SRC_DIR)/vnc.c \
     $(SRC_DIR)/udp.c \
     $(SRC_DIR)/tcp.c \
     $(SRC_DIR)/virtio.c \
@@ -95,6 +98,7 @@ C_SOURCES := \
     $(SRC_DIR)/arp.c \
     $(SRC_DIR)/dhcp.c \
     $(SRC_DIR)/sha256.c \
+    $(SRC_DIR)/sha256_selftest.c \
     $(SRC_DIR)/icmp.c
 
 GEN_C := \

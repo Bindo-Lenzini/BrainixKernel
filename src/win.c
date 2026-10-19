@@ -1,3 +1,4 @@
+#include "version.h"
 // BrainixKernel (BKOS) — win.c
 // ksh + clipboard + 8×16 AA + sysinfo.
 
@@ -347,7 +348,7 @@ static void cmd_sysinfo(win_t *w) {
     char buf[128];
 
     win_puts(w, "=== System Report ===");
-    win_puts(w, "OS: BrainixKernel (BKOS) v0.39");
+    win_puts(w, "OS: BrainixKernel (BKOS) v" BKOS_VERSION);
     win_puts(w, "Arch: AArch64 (ARMv8-A)");
     win_puts(w, "");
 

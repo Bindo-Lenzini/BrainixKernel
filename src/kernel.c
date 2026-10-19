@@ -1,3 +1,7 @@
+#include "version.h"
+#include "protosw.h"
+#include "vnc.h"
+
 // BrainixKernel (BKOS) — kernel.c
 // B3: ELF-загрузка user-программ.
 
@@ -59,7 +63,7 @@ static inline void isb(void)    { __asm__ volatile("isb"    ::: "memory"); }
 void uart_putc(char c) { while (*UART0_FR & UART_FR_TXFF) {} *UART0_DR = (uint32_t)c; }
 void uart_puts(const char *s) { while (*s) uart_putc(*s++); }
 void uart_puthex(uint64_t v) {
-    static const char hex[] = "0123456789ABCDEF";
+    static const char hex[] = "059016789ABCDEF";
     uart_puts("0x");
     for (int i = 60; i >= 0; i -= 4) uart_putc(hex[(v >> (uint64_t)i) & 0xF]);
 }
@@ -155,7 +159,7 @@ static int        g_win_about_id  = -1;
 
 static int        g_mouse_x = 640;
 static int        g_mouse_y = 400;
-static uint32_t   g_saved_bg[MOUSE_W * MOUSE_H];
+static uint32_t   g_saved_bg[MOUSE_W * FB_SCALE * MOUSE_H * FB_SCALE];
 static int        g_cursor_drawn = 0;
 static int        g_ui_ready = 0;
 
@@ -235,15 +239,12 @@ static const uint8_t cursor_pattern[MOUSE_H][MOUSE_W] = {
 
 static void cursor_hide(void) {
     if (!g_cursor_drawn) return;
-    for (int j = 0; j < MOUSE_H; j++)
-        for (int i = 0; i < MOUSE_W; i++)
-            fb_putpixel(g_mouse_x + i, g_mouse_y + j, g_saved_bg[j * MOUSE_W + i]);
+    fb_put_pixels(g_mouse_x, g_mouse_y, MOUSE_W, MOUSE_H, g_saved_bg);
     g_cursor_drawn = 0;
 }
 static void cursor_show(void) {
-    for (int j = 0; j < MOUSE_H; j++)
-        for (int i = 0; i < MOUSE_W; i++)
-            g_saved_bg[j * MOUSE_W + i] = fb_getpixel(g_mouse_x + i, g_mouse_y + j);
+    if (g_cursor_drawn) return;
+    fb_get_pixels(g_mouse_x, g_mouse_y, MOUSE_W, MOUSE_H, g_saved_bg);
     for (int j = 0; j < MOUSE_H; j++) {
         for (int i = 0; i < MOUSE_W; i++) {
             if (!cursor_pattern[j][i]) continue;
@@ -361,7 +362,7 @@ void kwin_cmd_help(win_t *w) {
     win_puts(w, "  images - photos - personalize");
 }
 void kwin_cmd_ver(win_t *w) {
-    win_puts(w, "BrainixKernel OS v0.45");
+    win_puts(w, "BrainixKernel OS v" BKOS_VERSION);
     win_puts(w, "ELF loader + per-process AS");
 }
 void kwin_cmd_tasks(win_t *w) {
@@ -551,6 +552,8 @@ uint64_t irq_handler(uint64_t sp) {
         kbd_poll();
         mouse_poll();
         net_poll();
+        vnc_poll();
+
 
         if (g_ui_ready) {
             if (mouse_left_pressed()) {
@@ -745,7 +748,7 @@ static void draw_top_bar(void) {
     fb_blend_rect(0, 0, 1280, 1, 0xFFFFFFFF, 60);
     fb_draw_string_aa(16, 18, "BrainixKernel", 0xFFF0F0F0, 0);
     fb_draw_string_aa(156, 18, "OS", 0xFF7AB8FF, 0);
-    fb_draw_string_aa(200, 18, "v0.45", 0xFFAAAAAA, 0);
+    fb_draw_string_aa(200, 18, "v" BKOS_VERSION, 0xFFAAAAAA, 0);
     {
         char buf[16];
         rtc_format_full_utc3(buf, sizeof(buf));
@@ -854,6 +857,7 @@ void kernel_main(uint64_t dtb) {
     if (!vnet_init(ecam.ecam_base)) uart_puts("  [net] not found\n");
     else uart_puts("  [net] ready\n");
 
+    domaininit();
     net_init();
     if (!dhcp_acquire()) {
         uart_puts("  [net] DHCP failed, using fallback hardcoded config\n");
@@ -861,7 +865,7 @@ void kernel_main(uint64_t dtb) {
     arp_init();
 
     uart_puts("[step 50] sha256 selftest\n");
-    sha256_selftest();
+    if (!sha256_selftest()) panic("sha256 selftest FAILED");
     net_print_mac("  [net] my MAC = ", net_get_mac().b);
     net_print_ip ("  [net] my IP  = ", net_get_ip());
     net_print_ip ("  [net] gateway = ", net_get_gateway());
@@ -926,7 +930,7 @@ void kernel_main(uint64_t dtb) {
 
     uart_puts("[step 43] create ksh window\n");
     win_init(&g_term);
-    win_puts(&g_term, "BrainixKernel OS v0.45");
+    win_puts(&g_term, "BrainixKernel OS v" BKOS_VERSION);
     win_puts(&g_term, "ELF loader + per-process AS");
     win_puts(&g_term, "");
     win_puts(&g_term, "Try 'sysinfo'.");
@@ -958,8 +962,8 @@ void kernel_main(uint64_t dtb) {
     uint64_t f_size    = (uint64_t)(user_fault_end - user_fault_start);
     task_t *u1 = task_create_user("U1", user_echo_start, echo_size);
     task_t *u2 = task_create_user("U2", user_print_u_start, u_size);
-    task_t *uf = task_create_user("U-fault", user_fault_start, f_size);
-    if (!a || !b || !u1 || !u2 || !uf) panic("task_create failed");
+    task_t *uf = 0;
+    if (!a || !b || !u1 || !u2 ) panic("task_create failed");
 
     // User-space shell: sh.elf. Запускаем как U-shell (stdin/stdout через UART).
     const initrd_file_t *elf_file = initrd_find("sh.elf");
@@ -982,8 +986,8 @@ void kernel_main(uint64_t dtb) {
 
     sched_add(a);
     sched_add(ue);
-    sched_add(uf);
-    (void)b; (void)u1; (void)u2; (void)uf;
+//     sched_add(uf);
+    (void)b; (void)u1; (void)u2;
 
     uart_puts("  free pages after tasks: ");
     uart_putu(physmem_free_pages()); uart_puts("\n");
@@ -991,6 +995,8 @@ void kernel_main(uint64_t dtb) {
     uart_puts("[step 11] starting scheduler\n");
     uart_puts("  >> ICMP ping test active <<\n");
 
+    uart_puts("[vnc] Connecting to 10.0.2.2:5901...\n");
+    vnc_connect((const uint8_t[]){10,0,2,2}, 5901);
     sched_start();
     panic("sched_start returned");
 }

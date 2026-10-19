@@ -1,9 +1,11 @@
 // BrainixKernel (BKOS) — sha256.c
 // SHA-256 (FIPS 180-4) + HMAC-SHA256 (RFC 2104).
+// Используется в TLS 1.3: HKDF, transcript hash, Finished MAC.
+//
+// Этот файл НЕ зависит от libc, НЕ использует malloc и НЕ печатает
+// в UART — чтобы его можно было включать и в ядро, и в user-space.
 #include <stdint.h>
 #include "sha256.h"
-
-extern void uart_puts(const char *s);
 
 static const uint32_t K[64] = {
     0x428a2f98u, 0x71374491u, 0xb5c0fbcfu, 0xe9b5dba5u,
@@ -124,27 +126,32 @@ void sha256_update(sha256_ctx_t *ctx, const void *data, uint32_t len) {
 }
 
 void sha256_final(sha256_ctx_t *ctx, uint8_t out[32]) {
-    // Padding: 0x80, нули, и 8-байтовый big-endian bitlen.
     uint64_t bitlen = ctx->bitlen;
-    uint8_t pad = 0x80;
-    sha256_update(ctx, &pad, 1);
-    ctx->bitlen = bitlen;    // update затрёт bitlen после padding — восстановим
+    uint32_t buflen = ctx->buflen;
 
-    uint8_t zero = 0x00;
-    while (ctx->buflen != 56) {
-        sha256_update(ctx, &zero, 1);
-        ctx->bitlen = bitlen;
+    // Append 0x80.
+    ctx->buf[buflen++] = 0x80;
+
+    // Не хватает места под 8-байтовую длину? Добиваем блок нулями
+    // и сжимаем, дальше padding пойдёт в следующий блок.
+    if (buflen > 56) {
+        while (buflen < 64) ctx->buf[buflen++] = 0;
+        compress(ctx, ctx->buf);
+        buflen = 0;
     }
 
-    uint8_t lenbuf[8];
+    // Добиваем нулями до байта 56.
+    while (buflen < 56) ctx->buf[buflen++] = 0;
+
+    // 8-байтовая big-endian длина в битах.
     for (int i = 0; i < 8; i++)
-        lenbuf[i] = (uint8_t)(bitlen >> (56 - i * 8));
-    sha256_update(ctx, lenbuf, 8);
+        ctx->buf[56 + i] = (uint8_t)(bitlen >> (56 - i * 8));
+
+    compress(ctx, ctx->buf);
 
     for (int i = 0; i < 8; i++)
         store_be32(out + i * 4, ctx->state[i]);
 
-    // Очистить (defensive).
     mem_zero(ctx, sizeof(*ctx));
 }
 
@@ -163,7 +170,7 @@ void hmac_sha256(const void *key, uint32_t key_len,
     mem_zero(k, sizeof(k));
 
     if (key_len > SHA256_BLOCK_SIZE) {
-        sha256(key, key_len, k);   // в первые 32 байта, остальные уже нули
+        sha256(key, key_len, k);
     } else {
         mem_copy(k, key, key_len);
     }
@@ -187,52 +194,8 @@ void hmac_sha256(const void *key, uint32_t key_len,
     sha256_update(&ctx, inner, 32);
     sha256_final(&ctx, out);
 
-    mem_zero(k,    sizeof(k));
-    mem_zero(ipad, sizeof(ipad));
-    mem_zero(opad, sizeof(opad));
+    mem_zero(k,     sizeof(k));
+    mem_zero(ipad,  sizeof(ipad));
+    mem_zero(opad,  sizeof(opad));
     mem_zero(inner, sizeof(inner));
-}
-
-// ============================================================
-// Self-test
-// ============================================================
-
-static int hex_eq(const uint8_t *digest, const char *hex) {
-    static const char H[] = "0123456789abcdef";
-    for (int i = 0; i < 32; i++) {
-        char hi = H[(digest[i] >> 4) & 0xF];
-        char lo = H[digest[i] & 0xF];
-        if (hi != hex[i*2] || lo != hex[i*2 + 1]) return 0;
-    }
-    return 1;
-}
-
-int sha256_selftest(void) {
-    uint8_t d[32];
-    int ok = 1;
-
-    // SHA-256("")
-    sha256("", 0, d);
-    if (!hex_eq(d, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")) {
-        uart_puts("[sha256] FAIL: empty\n"); ok = 0;
-    }
-
-    // SHA-256("abc")
-    sha256("abc", 3, d);
-    if (!hex_eq(d, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")) {
-        uart_puts("[sha256] FAIL: abc\n"); ok = 0;
-    }
-
-    // HMAC-SHA256(key = 0x0b * 20, data = "Hi There")
-    {
-        uint8_t key[20];
-        for (int i = 0; i < 20; i++) key[i] = 0x0b;
-        hmac_sha256(key, 20, "Hi There", 8, d);
-        if (!hex_eq(d, "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7")) {
-            uart_puts("[sha256] FAIL: hmac\n"); ok = 0;
-        }
-    }
-
-    if (ok) uart_puts("[sha256] selftest OK\n");
-    return ok;
 }

@@ -53,5 +53,7 @@ int  fb_console_is_ready(void);
 void fb_mark_dirty(int x, int y, int w, int h);
 void fb_flush(void);
 void fb_flush_dirty(void);
+void fb_get_pixels(int x, int y, int w, int h, uint32_t *out);
+void fb_put_pixels(int x, int y, int w, int h, const uint32_t *in);
 
 #endif

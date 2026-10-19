@@ -9,5 +9,6 @@ uint32_t *gpu_create_framebuffer(uint32_t w, uint32_t h);
 
 // Полный flush. Частичный, к сожалению, QEMU обрабатывает неверно.
 void gpu_flush(void);
+void gpu_flush_rect(int x, int y, int w, int h);
 
 #endif

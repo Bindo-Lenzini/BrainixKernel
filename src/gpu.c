@@ -246,6 +246,37 @@ uint32_t *gpu_create_framebuffer(uint32_t w, uint32_t h) {
     return g_fb;
 }
 
+void gpu_flush_rect(int x, int y, int w, int h) {
+    if (!g_ready || !g_fb || w <= 0 || h <= 0) return;
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > (int)g_fb_w) w = g_fb_w - x;
+    if (y + h > (int)g_fb_h) h = g_fb_h - y;
+    if (w <= 0 || h <= 0) return;
+
+    for (int i = 0; i < h; i++) {
+        uint8_t *row = (uint8_t*)g_fb + (y + i) * g_fb_w * 4 + x * 4;
+        cache_clean(row, w * 4);
+    }
+
+    mem_zero(g_cmd_buf, 4096);
+    virtio_gpu_transfer_to_host_2d_t *tr = (virtio_gpu_transfer_to_host_2d_t *)g_cmd_buf;
+    tr->hdr.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D;
+    tr->r.x = x; tr->r.y = y;
+    tr->r.width = w; tr->r.height = h;
+    tr->offset = ((uint64_t)y * g_fb_w + x) * 4;
+    tr->resource_id = g_resource_id;
+    if (!send2(tr, sizeof(*tr), g_resp_buf, 24)) return;
+
+    mem_zero(g_cmd_buf, 4096);
+    virtio_gpu_resource_flush_t *fl = (virtio_gpu_resource_flush_t *)g_cmd_buf;
+    fl->hdr.type = VIRTIO_GPU_CMD_RESOURCE_FLUSH;
+    fl->r.x = x; fl->r.y = y;
+    fl->r.width = w; fl->r.height = h;
+    fl->resource_id = g_resource_id;
+    send2(fl, sizeof(*fl), g_resp_buf, 24);
+}
+
 void gpu_flush(void) {
     if (!g_ready || !g_fb) return;
 

@@ -25,6 +25,8 @@ static uint32_t  g_con_bg = 0xFF101828;
 
 #define LINE_H 10
 static int g_dirty = 0;
+static int g_dirty_x0 = 9999, g_dirty_y0 = 9999;
+static int g_dirty_x1 = -1, g_dirty_y1 = -1;
 
 static inline uint32_t mix_u32(uint32_t fg, uint32_t bg, uint32_t a) {
     uint32_t inv = 255 - a;
@@ -37,8 +39,12 @@ static inline uint32_t mix_u32(uint32_t fg, uint32_t bg, uint32_t a) {
 }
 
 void fb_mark_dirty(int x, int y, int w, int h) {
-    (void)x; (void)y; (void)w; (void)h;
+    if (w <= 0 || h <= 0) return;
     g_dirty = 1;
+    if (x < g_dirty_x0) g_dirty_x0 = x;
+    if (y < g_dirty_y0) g_dirty_y0 = y;
+    if (x + w > g_dirty_x1) g_dirty_x1 = x + w;
+    if (y + h > g_dirty_y1) g_dirty_y1 = y + h;
 }
 
 void fb_init(uint32_t *base, uint32_t w_phys, uint32_t h_phys,
@@ -58,6 +64,7 @@ uint32_t fb_width(void)  { return g_w_log; }
 uint32_t fb_height(void) { return g_h_log; }
 
 void fb_putpixel(int x, int y, uint32_t color) {
+    fb_mark_dirty(x, y, 1, 1);
     if (!g_base) return;
     if (x < 0 || y < 0) return;
     if ((uint32_t)x >= g_w_log || (uint32_t)y >= g_h_log) return;
@@ -79,6 +86,7 @@ uint32_t fb_getpixel(int x, int y) {
 }
 
 void fb_fill_rect(int x, int y, int w, int h, uint32_t color) {
+    fb_mark_dirty(x, y, w, h);
     if (!g_base || w <= 0 || h <= 0) return;
     int px = x * FB_SCALE;
     int py = y * FB_SCALE;
@@ -111,6 +119,7 @@ void fb_fill_gradient_v(int x, int y, int w, int h, uint32_t top, uint32_t bot) 
 }
 
 void fb_darken_rect(int x, int y, int w, int h, uint32_t factor) {
+    fb_mark_dirty(x, y, w, h);
     if (!g_base) return;
     int px = x * FB_SCALE;
     int py = y * FB_SCALE;
@@ -169,6 +178,7 @@ int font_index(uint32_t cp) {
 }
 
 void fb_draw_cp_aa(int x, int y, uint32_t cp, uint32_t fg, uint32_t bg) {
+    fb_mark_dirty(x, y, 8, 16);
     if (!g_base) return;
     int idx = font_index(cp);
     if (idx < 0) return;
@@ -558,6 +568,33 @@ void fb_console_putc(char c) {
     g_con_x += 8;
 }
 
+
+void fb_get_pixels(int x, int y, int w, int h, uint32_t *out) {
+    int px = x * FB_SCALE;
+    int py = y * FB_SCALE;
+    int pw = w * FB_SCALE;
+    int ph = h * FB_SCALE;
+    if (px < 0 || py < 0 || px + pw > (int)g_w_phys || py + ph > (int)g_h_phys) return;
+    for (int j = 0; j < ph; j++) {
+        uint32_t *src_row = g_base + (uint32_t)(py + j) * g_stride_phys + px;
+        uint32_t *dst_row = out + (uint64_t)j * pw;
+        for (int i = 0; i < pw; i++) dst_row[i] = src_row[i];
+    }
+}
+void fb_put_pixels(int x, int y, int w, int h, const uint32_t *in) {
+    int px = x * FB_SCALE;
+    int py = y * FB_SCALE;
+    int pw = w * FB_SCALE;
+    int ph = h * FB_SCALE;
+    if (px < 0 || py < 0 || px + pw > (int)g_w_phys || py + ph > (int)g_h_phys) return;
+    for (int j = 0; j < ph; j++) {
+        uint32_t *dst_row = g_base + (uint32_t)(py + j) * g_stride_phys + px;
+        const uint32_t *src_row = in + (uint64_t)j * pw;
+        for (int i = 0; i < pw; i++) dst_row[i] = src_row[i];
+    }
+    fb_mark_dirty(x, y, w, h);
+}
+
 void fb_flush(void) {
     if (!g_con_ready) return;
     g_con_enabled = 0;
@@ -567,5 +604,26 @@ void fb_flush(void) {
 }
 void fb_flush_dirty(void) {
     if (!g_con_ready || !g_dirty) return;
-    fb_flush();
+
+    g_con_enabled = 0;
+    
+    int px = g_dirty_x0 * FB_SCALE;
+    int py = g_dirty_y0 * FB_SCALE;
+    int pw = (g_dirty_x1 - g_dirty_x0) * FB_SCALE;
+    int ph = (g_dirty_y1 - g_dirty_y0) * FB_SCALE;
+    
+    if (px < 0) { pw += px; px = 0; }
+    if (py < 0) { ph += py; py = 0; }
+    if (px + pw > (int)g_w_phys) pw = g_w_phys - px;
+    if (py + ph > (int)g_h_phys) ph = g_h_phys - py;
+
+    if (pw > 0 && ph > 0) {
+        gpu_flush_rect(px, py, pw, ph);
+    }
+    
+    g_con_enabled = 1;
+    
+    g_dirty = 0;
+    g_dirty_x0 = 9999; g_dirty_y0 = 9999;
+    g_dirty_x1 = -1; g_dirty_y1 = -1;
 }

@@ -2,6 +2,7 @@
 // FD-таблица теперь в task_t (per-process).
 
 #include <stdint.h>
+#include "protosw.h"
 #include <stddef.h>
 #include "syscall.h"
 #include "task.h"
@@ -236,17 +237,21 @@ static uint64_t sys_open(const char *user_name, int flags) {
 }
 
 static uint64_t sys_close(int fd) {
+    uart_puts("[sys_close] called\n");
+    uart_puts("[sys_close] called\n");
     task_fd_t *f = fd_used(fd);
     if (!f) return (uint64_t)-1;
 
-    if (f->src == TFD_PIPE_READ)  pipe_close_read(f->pipe_idx);
-    if (f->src == TFD_PIPE_WRITE) pipe_close_write(f->pipe_idx);
-    if (f->src == TFD_TCP) {
-        tcp_conn_t *c = tcp_get(f->tcp_idx);
-        if (c) { tcp_close(c); tcp_free(f->tcp_idx); }
-    }
-    if (f->src == TFD_SOCKET) {
-        sock_free(f->sock_idx);
+    if (f->src == TFD_TCP || f->src == TFD_SOCKET) {
+        int type = (f->src == TFD_TCP) ? SOCK_STREAM : SOCK_DGRAM;
+        struct protosw *pr = pffindproto(AF_INET, type, 0);
+        if (pr && pr->pr_close) {
+            pr->pr_close(f);
+        }
+    } else if (f->src == TFD_PIPE_READ) {
+        pipe_close_read(f->pipe_idx);
+    } else if (f->src == TFD_PIPE_WRITE) {
+        pipe_close_write(f->pipe_idx);
     }
 
     f->used       = 0;
@@ -582,7 +587,12 @@ static uint64_t do_exit(uint64_t code, uint64_t sp) {
 // socket (AF_INET/SOCK_DGRAM)
 // ------------------------------------------------------------------
 static uint64_t sys_socket(int domain, int type, int protocol) {
-    (void)domain; (void)protocol;
+    uart_puts("[sys_socket] called\n");
+    uart_puts("[sys_socket] called\n");
+ uart_puts("[sys_socket] called\n");
+    // Ищем протокол в таблице protosw (вместо if/else)
+    if (domain == 0) domain = AF_INET; if (domain == 0) domain = AF_INET; if (domain == 0) domain = AF_INET; struct protosw *pr = pffindproto(domain, type, protocol);
+    if (!pr) return (uint64_t)-1; // Семейство/тип не поддерживается
 
     int fd = fd_alloc_slot();
     if (fd < 0) return (uint64_t)-1;
@@ -597,20 +607,25 @@ static uint64_t sys_socket(int domain, int type, int protocol) {
     f->sock_idx   = -1;
     f->tcp_idx    = -1;
 
-    if (type == 2) {        // SOCK_DGRAM
-        int idx = sock_alloc(0);
-        if (idx < 0) { f->used = 0; return (uint64_t)-1; }
+    // Вызываем pr_attach из таблицы протоколов!
+    int idx = pr->pr_attach(f); 
+    if (idx < 0) { 
+        f->used = 0; 
+        return (uint64_t)-1; 
+    }
+
+    // Настраиваем fd в зависимости от типа
+    if (type == SOCK_DGRAM) {
         f->src      = TFD_SOCKET;
         f->sock_idx = idx;
-    } else if (type == 1) { // SOCK_STREAM
-        int idx = tcp_alloc();
-        if (idx < 0) { f->used = 0; return (uint64_t)-1; }
+    } else if (type == SOCK_STREAM) {
         f->src     = TFD_TCP;
         f->tcp_idx = idx;
     } else {
         f->used = 0;
         return (uint64_t)-1;
     }
+    
     return (uint64_t)fd;
 }
 
@@ -621,13 +636,17 @@ static uint64_t sys_socket(int domain, int type, int protocol) {
 // ------------------------------------------------------------------
 static uint64_t sys_bind(int fd, uint16_t port_be) {
     task_fd_t *f = fd_used(fd);
-    if (!f || f->src != TFD_SOCKET) return (uint64_t)-1;
+    if (!f || (f->src != TFD_SOCKET && f->src != TFD_TCP)) return (uint64_t)-1;
+    
+    int type = (f->src == TFD_TCP) ? SOCK_STREAM : SOCK_DGRAM;
+    struct protosw *pr = pffindproto(AF_INET, type, 0);
+    if (!pr || !pr->pr_bind) return (uint64_t)-1;
 
-    socket_t *s = sock_get(f->sock_idx);
-    if (!s) return (uint64_t)-1;
-
-    s->local_port = port_be;
-    return 0;
+    struct sockaddr_in sa;
+    sa.sin_family = AF_INET;
+    sa.sin_port = port_be;
+    sa.sin_addr = 0;
+    return pr->pr_bind(f, (struct sockaddr *)&sa);
 }
 
 // ------------------------------------------------------------------
@@ -649,28 +668,29 @@ static uint64_t sys_sendto(int fd, const void *user_buf, uint64_t len,
                            uint64_t dst_port_be, const uint8_t *user_dst_ip)
 {
     task_fd_t *f = fd_used(fd);
-    if (!f || f->src != TFD_SOCKET) return (uint64_t)-1;
-    socket_t *s = sock_get(f->sock_idx);
-    if (!s) return (uint64_t)-1;
-    if (s->local_port == 0) return (uint64_t)-1;   // bind не вызван
-    if (!user_buf || len == 0 || len > SOCK_MAX_PACKET) return (uint64_t)-1;
+    if (!f || (f->src != TFD_SOCKET && f->src != TFD_TCP)) return (uint64_t)-1;
 
+    int type = (f->src == TFD_TCP) ? SOCK_STREAM : SOCK_DGRAM;
+    struct protosw *pr = pffindproto(AF_INET, type, 0);
+    if (!pr || !pr->pr_send) return (uint64_t)-1;
+
+    if (!user_buf || len == 0 || len > SOCK_MAX_PACKET) return (uint64_t)-1;
+    
     uint8_t kbuf[SOCK_MAX_PACKET];
     if (copy_from_user(kbuf, user_buf, len) < 0) return (uint64_t)-1;
-
+    
     uint8_t ip[4];
     if (copy_from_user(ip, user_dst_ip, 4) < 0) return (uint64_t)-1;
 
-    ipv4_t dst_ip;
-    dst_ip.b[0] = ip[0]; dst_ip.b[1] = ip[1];
-    dst_ip.b[2] = ip[2]; dst_ip.b[3] = ip[3];
+    struct sockaddr_in sa;
+    sa.sin_family = AF_INET;
+    sa.sin_port = (uint16_t)dst_port_be;
+    uint8_t *a = (uint8_t *)&sa.sin_addr;
+    a[0] = ip[0]; a[1] = ip[1]; a[2] = ip[2]; a[3] = ip[3];
 
-    uint16_t dst_port = (uint16_t)dst_port_be;
-
-    if (!net_send_udp(dst_ip, s->local_port, dst_port, kbuf, (uint32_t)len))
-        return (uint64_t)-1;
-
-    return len;
+    int ret = pr->pr_send(f, kbuf, len, (struct sockaddr *)&sa);
+    if (ret < 0) return (uint64_t)-1;
+    return (uint64_t)ret;
 }
 
 // ------------------------------------------------------------------
@@ -686,75 +706,52 @@ static uint64_t sys_recvfrom(int fd, void *user_buf, uint64_t max_len,
                              uint16_t *user_src_port, uint8_t *user_src_ip)
 {
     task_fd_t *f = fd_used(fd);
-    if (!f || f->src != TFD_SOCKET) return (uint64_t)-1;
-    socket_t *s = sock_get(f->sock_idx);
-    if (!s) return (uint64_t)-1;
+    if (!f || (f->src != TFD_SOCKET && f->src != TFD_TCP)) return (uint64_t)-1;
+
+    int type = (f->src == TFD_TCP) ? SOCK_STREAM : SOCK_DGRAM;
+    struct protosw *pr = pffindproto(AF_INET, type, 0);
+    if (!pr || !pr->pr_recv) return (uint64_t)-1;
+
     if (!user_buf || max_len == 0) return (uint64_t)-1;
+    if (max_len > SOCK_MAX_PACKET) max_len = SOCK_MAX_PACKET;
 
-    if (s->rx_head == s->rx_tail) return 0;
+    uint8_t kbuf[SOCK_MAX_PACKET];
+    struct sockaddr_in sa;
+    int ret = pr->pr_recv(f, kbuf, max_len, (struct sockaddr *)&sa);
+    if (ret <= 0) return (uint64_t)ret;
 
-    sock_pkt_t *p = &s->rx[s->rx_head];
-    s->rx_head = (s->rx_head + 1) % SOCK_RX_QUEUE;
+    if (copy_to_user(user_buf, kbuf, ret) < 0) return (uint64_t)-1;
 
-    uint64_t copy_len = p->len;
-    if (copy_len > max_len) copy_len = max_len;
-    if (copy_to_user(user_buf, p->data, copy_len) < 0) return (uint64_t)-1;
-
-    // p->src_port уже в host-order (udp_handle_ipv4 распарсил байты).
     if (user_src_port) {
-        if (copy_to_user(user_src_port, &p->src_port, 2) < 0)
-            return (uint64_t)-1;
+        if (copy_to_user(user_src_port, &sa.sin_port, 2) < 0) return (uint64_t)-1;
     }
     if (user_src_ip) {
-        if (copy_to_user(user_src_ip, p->src_ip, 4) < 0) return (uint64_t)-1;
+        uint8_t *a = (uint8_t *)&sa.sin_addr;
+        if (copy_to_user(user_src_ip, a, 4) < 0) return (uint64_t)-1;
     }
-    return copy_len;
+    return (uint64_t)ret;
 }
 
 // ------------------------------------------------------------------
 // connect(fd, ip[4], port_host)
 // ------------------------------------------------------------------
-static uint64_t sys_connect(int fd, const uint8_t *user_ip, uint16_t port_host)
-{
+static uint64_t sys_connect(int fd, const uint8_t *user_ip, uint16_t port_host) {
     task_fd_t *f = fd_used(fd);
     if (!f || f->src != TFD_TCP) return (uint64_t)-1;
-    tcp_conn_t *c = tcp_get(f->tcp_idx);
-    if (!c) return (uint64_t)-1;
+
+    struct protosw *pr = pffindproto(AF_INET, SOCK_STREAM, 0);
+    if (!pr || !pr->pr_connect) return (uint64_t)-1;
 
     uint8_t ip[4];
     if (copy_from_user(ip, user_ip, 4) < 0) return (uint64_t)-1;
 
-    ipv4_t my_ip = net_get_ip();
-    c->local_ip[0] = my_ip.b[0];
-    c->local_ip[1] = my_ip.b[1];
-    c->local_ip[2] = my_ip.b[2];
-    c->local_ip[3] = my_ip.b[3];
-    c->local_port  = 40002 + f->tcp_idx;
+    struct sockaddr_in sa;
+    sa.sin_family = AF_INET;
+    sa.sin_port = port_host;
+    uint8_t *a = (uint8_t *)&sa.sin_addr;
+    a[0] = ip[0]; a[1] = ip[1]; a[2] = ip[2]; a[3] = ip[3];
 
-    c->remote_ip[0] = ip[0];
-    c->remote_ip[1] = ip[1];
-    c->remote_ip[2] = ip[2];
-    c->remote_ip[3] = ip[3];
-    c->remote_port  = port_host;
-
-    if (!tcp_send_syn(c)) return (uint64_t)-1;
-
-    // Ждём ESTABLISHED до ~5 сек.
-    // Мы в kernel-контексте, но не можем блокироваться — ждём в цикле.
-    // Каждый tick вызывает net_poll + tcp_tick — но мы в SVC, не в IRQ.
-    // Проще: ждём через несколько вызовов net_poll руками.
-    extern void net_poll(void);
-    extern void tcp_tick(uint32_t);
-    static uint32_t fake_tick = 0;
-
-    for (int i = 0; i < 5000; i++) {
-        net_poll();
-        tcp_tick(++fake_tick);
-        if (c->state == TCP_ESTABLISHED) return 0;
-        if (c->state == TCP_CLOSED) return (uint64_t)-1;
-        for (volatile int k = 0; k < 100000; k++) {}
-    }
-    return (uint64_t)-1;
+    return (uint64_t)pr->pr_connect(f, (struct sockaddr *)&sa);
 }
 
 static uint64_t sys_send(int fd, const void *user_buf, size_t len) {
