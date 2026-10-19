@@ -1,46 +1,108 @@
-# BrainixKernel (BKOS), headless
+BrainixKernel (BKOS)
+====================
 
-Учебное ядро операционной системы для **AArch64** (ARM64) без графики. Написано на C и ассемблере, без стандартной библиотеки. Работает в QEMU (машина `virt`, Cortex-A72, 2 ГБ RAM). Консоль работает через последовательный порт (UART).
+BrainixKernel is a small hobby kernel for AArch64 (ARMv8-A), written in C and
+assembly without the C standard library. This is the headless edition: there is
+no graphics stack, the console is the PL011 serial port.
 
-## Что есть
+It targets the QEMU `virt` machine (Cortex-A72, GICv2, 2 GB RAM).
 
-- Управление памятью: MMU, физический аллокатор, куча
-- Процессы и планировщик, загрузка ELF, системные вызовы, pipe
-- Сетевой стек: virtio-net, ARP, DHCP, IPv4, ICMP, UDP, TCP, сокеты
-- Драйверы virtio-blk и virtio-net, PCI
-- Файловая система `bkfs` и initrd
-- Шелл ядра `ksh` и пользовательская оболочка `sh`
-- Пользовательские программы: `sh`, `ls`, `cat`, `wc`, `echo`, `test`, `host`, `wget`, `udp_send`, `udp_echo`, `tcp_connect`
+Quick Start
+-----------
 
-Графика, мышь и клавиатура из этой версии удалены. Полная версия с GUI находится в отдельном репозитории.
+* Build the kernel:     make
+* Run in QEMU:          make run
+* Clean build output:   make clean
+* Exit QEMU:            Ctrl-A, then X
 
-## Сборка и запуск
+Requirements
+------------
 
-Нужны: clang и ld.lld (цель `aarch64-elf`), `llvm-objcopy`, `qemu-system-aarch64`, python3.
+* clang and ld.lld with the aarch64-elf target
+* llvm-objcopy
+* qemu-system-aarch64
+* python3
 
-```sh
-make        # собрать build/kernel.bin
-make run    # запустить в QEMU с консолью в терминале
-make clean
-```
+Features
+--------
 
-Выход из QEMU: `Ctrl-A`, затем `X`.
+* Memory management: MMU, physical page allocator, kernel heap
+* Processes: scheduler, ELF loader, system calls, pipes
+* Networking: virtio-net, ARP, DHCP, IPv4, ICMP, UDP, TCP, sockets, DNS client
+* Drivers: PCI, virtio-blk, virtio-net
+* Storage: bkfs filesystem, initrd
+* Userland: ksh (kernel shell) and sh, plus ls, cat, wc, echo, test, host,
+  wget, udp_send, udp_echo, tcp_connect
 
-## Структура
+Repository layout
+-----------------
 
-```
-Makefile      сборка
-linker.ld     линкер-скрипт
-src/          ядро
-user/         пользовательские программы и libc
-scripts/      генераторы (initrd)
-initrd/       собранные ELF для initrd
-```
+    Makefile          build rules (kernel + user programs + initrd)
+    linker.ld         kernel linker script
+    src/              kernel sources
+      kernel.c        entry point, boot sequence, IRQ handler
+      mmu.c           page tables, copy-on-write
+      physmem.c       physical page allocator
+      heap.c          kernel heap
+      sched.c         scheduler
+      task.c          tasks and processes
+      elf.c           ELF loader
+      syscall.c       system call dispatch
+      exception.c     synchronous exception handling
+      dtb.c           device tree parser
+      pci.c           PCI / ECAM
+      virtio*.c       virtio transport and net driver
+      blk.c           block device
+      bkfs.c          filesystem
+      initrd.c        initial RAM disk
+      ksh.c           kernel shell buffer
+      net.c, arp.c,
+      dhcp.c, icmp.c,
+      udp.c, tcp.c,
+      socket.c        network stack
+    user/             userland programs, libc, DNS client
+    scripts/          build helpers (initrd packer)
+    initrd/           user ELF binaries packed into the initrd
+    build/            generated files (not tracked)
 
-## Статус
+Who are you?
+------------
 
-Код не проверен на сборку в этой версии. Возможны ошибки компиляции и линковки. Замечания и исправления приветствуются через issues и pull requests.
+New kernel developer
+    Start with kernel.c: the boot sequence is in kernel_main(), and the
+    interrupt path is in irq_handler().
 
-## Лицензия
+Networking developer
+    The stack is layered: virtio_net.c -> net.c -> arp.c / ifnet.c ->
+    ip -> icmp.c / udp.c / tcp.c -> socket.c.
 
-Не указана.
+Driver author
+    Devices are found through the device tree (dtb.c) and PCI ECAM (pci.c).
+    virtio_net.c and blk.c show the current pattern.
+
+User program author
+    Copy one of user/*.c, add its name to USER_PROGS in the Makefile, and it
+    is packed into the initrd automatically.
+
+Status
+------
+
+This version has not yet been verified on a clean build. Known gaps:
+
+* scripts/mkinitrd.py and the assembly files user/crt0.S, user/syscall.S and
+  src/uaccess.S are required but are not in the repository yet.
+* CI builds on Ubuntu, so llvm-objcopy must be on PATH there.
+
+Contributing
+------------
+
+Open an issue for bugs or questions, or send a pull request. Keep changes
+small and explain what you tested and how.
+
+License
+-------
+
+BrainixKernel is licensed under the GNU General Public License, version 2
+(GPL-2.0-only). See the LICENSE file for the full text.
+
+Contributions are accepted under the same license.
