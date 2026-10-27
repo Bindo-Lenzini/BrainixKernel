@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — user_demo.S
+// BrainixKernel — user_demo.S
 // Три user-программы:
 //   user_echo    — читает stdin, эхо-выводит
 //   user_print_u — печатает "U\n" в цикле

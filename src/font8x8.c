@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — font8x8.c
+// BrainixKernel — font8x8.c
 // Публичный домен, классический 8×8 ASCII (0x20..0x7F).
 
 #include <stdint.h>

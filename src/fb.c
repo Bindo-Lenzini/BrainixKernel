@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — fb.c
+// BrainixKernel — fb.c
 // 2× retina + SSAA (2×2 oversampling на каждый физический пиксель).
 // Все AA-примитивы (rounded rect, circle, blend) считают alpha в
 // физических пикселях — никакой мозаики 2×2.

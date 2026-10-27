@@ -1,5 +1,5 @@
-#ifndef BKOS_VNC_H
-#define BKOS_VNC_H
+#ifndef BRAINIX_VNC_H
+#define BRAINIX_VNC_H
 
 #include <stdint.h>
 

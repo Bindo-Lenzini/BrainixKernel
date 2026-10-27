@@ -1,6 +1,6 @@
-// BrainixKernel (BKOS) — pci.h
-#ifndef BKOS_PCI_H
-#define BKOS_PCI_H
+// BrainixKernel — pci.h
+#ifndef BRAINIX_PCI_H
+#define BRAINIX_PCI_H
 
 #include <stdint.h>
 #include "virtio.h"

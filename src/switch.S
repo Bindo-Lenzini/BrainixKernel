@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — switch.S
+// BrainixKernel — switch.S
 // context_switch(task_t *prev, task_t *next)
 //
 // Сохраняет callee-saved регистры (x19..x30, sp) в prev и

@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — user/udp_send.c
+// BrainixKernel — user/udp_send.c
 // Отправляет UDP на gateway:7. Без htons — kernel ABI ждёт host-order порт.
 
 #include "user.h"
@@ -19,7 +19,7 @@ int main(void) {
 
     unsigned char dst_ip[4] = {10, 0, 2, 2};
     unsigned short dst_port = 7;
-    const char *msg = "hello from BKOS UDP";
+    const char *msg = "hello from Brainix UDP";
 
     long s = sendto(fd, msg, strlen(msg), dst_port, dst_ip);
     printf("sendto = %d\n", (int)s);

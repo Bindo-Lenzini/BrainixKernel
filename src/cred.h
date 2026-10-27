@@ -1,7 +1,7 @@
-// BrainixKernel (BKOS) — cred.h
+// BrainixKernel — cred.h
 // UNIX-style credentials and capabilities.
-#ifndef BKOS_CRED_H
-#define BKOS_CRED_H
+#ifndef BRAINIX_CRED_H
+#define BRAINIX_CRED_H
 
 #include <stdint.h>
 

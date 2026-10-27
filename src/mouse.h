@@ -1,6 +1,6 @@
-// BrainixKernel (BKOS) — mouse.h
-#ifndef BKOS_MOUSE_H
-#define BKOS_MOUSE_H
+// BrainixKernel — mouse.h
+#ifndef BRAINIX_MOUSE_H
+#define BRAINIX_MOUSE_H
 
 #include <stdint.h>
 

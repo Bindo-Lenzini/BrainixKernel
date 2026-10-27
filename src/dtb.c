@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — dtb.c
+// BrainixKernel — dtb.c
 // FDT-парсер. g_dtb — KVA. Все reads через KVA.
 // RAM banks отдаются как PA (используются physmem как PA).
 // PCIe ECAM отдаётся как KVA (callers используют как memory).

@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — user.h
+// BrainixKernel — user.h
 #ifndef USER_H
 #define USER_H
 

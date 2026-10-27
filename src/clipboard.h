@@ -1,7 +1,7 @@
-// BrainixKernel (BKOS) — clipboard.h
+// BrainixKernel — clipboard.h
 // Глобальный буфер обмена (для Ctrl+C / Ctrl+V).
-#ifndef BKOS_CLIPBOARD_H
-#define BKOS_CLIPBOARD_H
+#ifndef BRAINIX_CLIPBOARD_H
+#define BRAINIX_CLIPBOARD_H
 
 #include <stdint.h>
 

@@ -1,7 +1,7 @@
-// BrainixKernel (BKOS) — initrd.h
+// BrainixKernel — initrd.h
 // Чтение файлов, вкомпилированных в образ ядра.
-#ifndef BKOS_INITRD_H
-#define BKOS_INITRD_H
+#ifndef BRAINIX_INITRD_H
+#define BRAINIX_INITRD_H
 
 #include <stdint.h>
 

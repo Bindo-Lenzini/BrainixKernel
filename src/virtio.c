@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — virtio.c
+// BrainixKernel — virtio.c
 // Транспорт virtio-pci (modern).
 // desc/avail/used — KVA. Device получает PA через KVA_TO_PA.
 

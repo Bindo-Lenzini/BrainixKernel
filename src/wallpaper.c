@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — wallpaper.c
+// BrainixKernel — wallpaper.c
 
 #include <stdint.h>
 #include "wallpaper.h"

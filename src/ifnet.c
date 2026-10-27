@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — ifnet.c
+// BrainixKernel — ifnet.c
 #include "ifnet.h"
 
 extern void uart_puts(const char *s);

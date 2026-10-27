@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — backdrop.c
+// BrainixKernel — backdrop.c
 // Размытие обоев (box blur, separable) + рисование «матовых» панелей.
 
 #include <stdint.h>

@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — task.c
+// BrainixKernel — task.c
 
 #include <stdint.h>
 #include <stddef.h>

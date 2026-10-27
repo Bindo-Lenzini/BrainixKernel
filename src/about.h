@@ -1,7 +1,7 @@
-// BrainixKernel (BKOS) — about.h
+// BrainixKernel — about.h
 // Окно "About This System": системная информация в стиле macOS.
-#ifndef BKOS_ABOUT_H
-#define BKOS_ABOUT_H
+#ifndef BRAINIX_ABOUT_H
+#define BRAINIX_ABOUT_H
 
 void about_draw_content(int cx, int cy, int cw, int ch);
 

@@ -1,6 +1,6 @@
-// BrainixKernel (BKOS) — dtb.h
-#ifndef BKOS_DTB_H
-#define BKOS_DTB_H
+// BrainixKernel — dtb.h
+#ifndef BRAINIX_DTB_H
+#define BRAINIX_DTB_H
 
 #include <stdint.h>
 

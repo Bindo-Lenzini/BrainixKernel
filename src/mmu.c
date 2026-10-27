@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — mmu.c
+// BrainixKernel — mmu.c
 //
 // TTBR1 (верхняя половина): linear map kernel-адресов. KVA = PA + offset.
 // TTBR0 (нижняя половина): per-task. Каждой user-задаче выдаётся

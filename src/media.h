@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — media.h
+// BrainixKernel — media.h
 // Медиа-диск: второй virtio-blk, на который пользователь может скидывать
 // картинки с macOS-хоста. Образ собирается scripts/mkmedia.py.
 //
@@ -6,8 +6,8 @@
 //   сектор 0          : суперблок (magic, version, num_files, data_start)
 //   сектора 1..15     : таблица файлов (по 64 байта, до 120 записей)
 //   сектор 16 и далее : данные файлов
-#ifndef BKOS_MEDIA_H
-#define BKOS_MEDIA_H
+#ifndef BRAINIX_MEDIA_H
+#define BRAINIX_MEDIA_H
 
 #include <stdint.h>
 

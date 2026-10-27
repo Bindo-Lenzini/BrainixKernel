@@ -1,7 +1,7 @@
-// BrainixKernel (BKOS) — icons.h
+// BrainixKernel — icons.h
 // Все иконки рисуются в боксе 48×48 (верхний-левый угол (x, y)).
-#ifndef BKOS_ICONS_H
-#define BKOS_ICONS_H
+#ifndef BRAINIX_ICONS_H
+#define BRAINIX_ICONS_H
 
 #include <stdint.h>
 

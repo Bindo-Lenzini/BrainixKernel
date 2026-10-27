@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — syscall.c
+// BrainixKernel — syscall.c
 // FD-таблица теперь в task_t (per-process).
 
 #include <stdint.h>

@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — user/crt0.S
+// BrainixKernel — user/crt0.S
 // Точка входа. Kernel устанавливает:
 //   x0 = argc
 //   x1 = argv

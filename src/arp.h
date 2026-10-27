@@ -1,6 +1,6 @@
-// BrainixKernel (BKOS) — arp.h
-#ifndef BKOS_ARP_H
-#define BKOS_ARP_H
+// BrainixKernel — arp.h
+#ifndef BRAINIX_ARP_H
+#define BRAINIX_ARP_H
 
 #include <stdint.h>
 #include "net.h"

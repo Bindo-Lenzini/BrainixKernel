@@ -1,6 +1,6 @@
-// BrainixKernel (BKOS) — editor.h
-#ifndef BKOS_EDITOR_H
-#define BKOS_EDITOR_H
+// BrainixKernel — editor.h
+#ifndef BRAINIX_EDITOR_H
+#define BRAINIX_EDITOR_H
 
 #include <stdint.h>
 

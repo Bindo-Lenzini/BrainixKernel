@@ -1,6 +1,6 @@
-// BrainixKernel (BKOS) — icmp.h
-#ifndef BKOS_ICMP_H
-#define BKOS_ICMP_H
+// BrainixKernel — icmp.h
+#ifndef BRAINIX_ICMP_H
+#define BRAINIX_ICMP_H
 
 #include <stdint.h>
 #include "net.h"

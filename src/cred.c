@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — cred.c
+// BrainixKernel — cred.c
 #include "cred.h"
 #include "heap.h"
 #include <stddef.h>

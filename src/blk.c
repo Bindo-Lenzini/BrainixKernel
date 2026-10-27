@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — blk.c
+// BrainixKernel — blk.c
 // virtio-blk через PCI. Буферы KVA, дескрипторы получают PA.
 
 #include <stdint.h>

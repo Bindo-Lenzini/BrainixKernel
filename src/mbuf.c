@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — mbuf.c
+// BrainixKernel — mbuf.c
 #include "mbuf.h"
 #include "heap.h"
 

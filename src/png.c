@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — png.c
+// BrainixKernel — png.c
 // Декодер PNG + BMP в формат ARGB8888 (0xAARRGGBB).
 // JPEG делегируется в jpeg.c.
 //

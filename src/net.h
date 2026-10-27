@@ -1,7 +1,7 @@
-// BrainixKernel (BKOS) — net.h
+// BrainixKernel — net.h
 // Общие утилиты сети: byte order, типы, Ethernet/ARP заголовки.
-#ifndef BKOS_NET_H
-#define BKOS_NET_H
+#ifndef BRAINIX_NET_H
+#define BRAINIX_NET_H
 
 #include <stdint.h>
 

@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — icons.c
+// BrainixKernel — icons.c
 // macOS Big Sur-style: squircle base + solid color + white glyph.
 
 #include <stdint.h>

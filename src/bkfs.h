@@ -1,8 +1,8 @@
-// BrainixKernel (BKOS) — bkfs.h
+// BrainixKernel — bkfs.h
 // Простая файловая система на секторах virtio-blk.
 // Версия 2: 13 прямых + 1 косвенный блок = до 72 KB на файл.
-#ifndef BKOS_BKFS_H
-#define BKOS_BKFS_H
+#ifndef BRAINIX_BKFS_H
+#define BRAINIX_BKFS_H
 
 #include <stdint.h>
 

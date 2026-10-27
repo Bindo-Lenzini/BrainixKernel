@@ -1,7 +1,7 @@
-// BrainixKernel (BKOS) — wallpaper.h
+// BrainixKernel — wallpaper.h
 // Пресеты обоев + кастомные PNG/BMP/JPEG картинки из initrd и медиа-диска.
-#ifndef BKOS_WALLPAPER_H
-#define BKOS_WALLPAPER_H
+#ifndef BRAINIX_WALLPAPER_H
+#define BRAINIX_WALLPAPER_H
 
 #include <stdint.h>
 

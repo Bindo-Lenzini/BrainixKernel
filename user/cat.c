@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — user/cat.c
+// BrainixKernel — user/cat.c
 #include "user.h"
 #include "libc.h"
 

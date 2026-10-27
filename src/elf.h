@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — elf.h
+// BrainixKernel — elf.h
 // Парсер ELF64 EXEC для AArch64. Только для user-программ:
 //   * Class: ELF64
 //   * Data: little-endian
@@ -8,8 +8,8 @@
 // Program headers не обязаны иметь секции .data/.bss — работаем
 // только с PT_LOAD сегментами.
 
-#ifndef BKOS_ELF_H
-#define BKOS_ELF_H
+#ifndef BRAINIX_ELF_H
+#define BRAINIX_ELF_H
 
 #include <stdint.h>
 

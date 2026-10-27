@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — startmenu.c
+// BrainixKernel — startmenu.c
 // Меню «Пуск» с живыми кнопками: 3D-иконки, hover, подписи, стрелки.
 
 #include <stdint.h>

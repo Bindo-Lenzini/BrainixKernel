@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — physmem.c
+// BrainixKernel — physmem.c
 // Bitmap-аллокатор. Возвращает KVA-указатели (PA + KERNEL_VA_OFFSET).
 
 #include <stdint.h>

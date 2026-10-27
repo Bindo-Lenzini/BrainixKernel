@@ -1,6 +1,6 @@
-// BrainixKernel (BKOS) — heap.h
-#ifndef BKOS_HEAP_H
-#define BKOS_HEAP_H
+// BrainixKernel — heap.h
+#ifndef BRAINIX_HEAP_H
+#define BRAINIX_HEAP_H
 
 #include <stddef.h>
 

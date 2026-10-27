@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — bkfs.c
+// BrainixKernel — bkfs.c
 // Реализация BKFS v2: 13 прямых + 1 косвенный блок = до 72 KB на файл.
 // Bitmap свободных блоков в памяти (пересобирается при init).
 // Без libc.

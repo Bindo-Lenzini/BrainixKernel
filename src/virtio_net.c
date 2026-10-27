@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — virtio_net.c
+// BrainixKernel — virtio_net.c
 // virtio-net через PCI (modern, VIRTIO_F_VERSION_1).
 //
 // ВАЖНО: в modern режиме virtio-net header — 12 байт, не 10!

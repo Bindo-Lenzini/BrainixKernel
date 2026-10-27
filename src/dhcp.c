@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — dhcp.c
+// BrainixKernel — dhcp.c
 #include <stdint.h>
 #include "dhcp.h"
 #include "net.h"

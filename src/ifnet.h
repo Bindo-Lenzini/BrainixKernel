@@ -1,7 +1,7 @@
-// BrainixKernel (BKOS) — ifnet.h
+// BrainixKernel — ifnet.h
 // Абстракция сетевого интерфейса. Вдохновлено FreeBSD.
-#ifndef BKOS_IFNET_H
-#define BKOS_IFNET_H
+#ifndef BRAINIX_IFNET_H
+#define BRAINIX_IFNET_H
 
 #include <stdint.h>
 #include "mbuf.h"

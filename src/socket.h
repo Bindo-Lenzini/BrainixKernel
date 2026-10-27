@@ -1,8 +1,8 @@
-// BrainixKernel (BKOS) — socket.h
+// BrainixKernel — socket.h
 // Примитивная абстракция UDP-сокета. Привязка к fd делается в syscall.c.
 
-#ifndef BKOS_SOCKET_H
-#define BKOS_SOCKET_H
+#ifndef BRAINIX_SOCKET_H
+#define BRAINIX_SOCKET_H
 
 #include <stdint.h>
 

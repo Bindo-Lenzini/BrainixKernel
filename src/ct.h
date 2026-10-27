@@ -1,7 +1,7 @@
-// BrainixKernel (BKOS) — ct.h
+// BrainixKernel — ct.h
 // Constant-time утилиты. НЕ оптимизировать без понимания.
-#ifndef BKOS_CT_H
-#define BKOS_CT_H
+#ifndef BRAINIX_CT_H
+#define BRAINIX_CT_H
 
 #include <stdint.h>
 

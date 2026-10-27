@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — pci.c
+// BrainixKernel — pci.c
 // Общие PCI helpers.
 //
 // ECAM адреса (доступ к configuration space) приходят из dtb.c как KVA.

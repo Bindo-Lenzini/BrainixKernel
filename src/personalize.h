@@ -1,7 +1,7 @@
-// BrainixKernel (BKOS) — personalize.h
+// BrainixKernel — personalize.h
 // Окно "Personalization": список обоев + превью + Apply.
-#ifndef BKOS_PERSONALIZE_H
-#define BKOS_PERSONALIZE_H
+#ifndef BRAINIX_PERSONALIZE_H
+#define BRAINIX_PERSONALIZE_H
 
 #include <stdint.h>
 #include "png.h"

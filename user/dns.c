@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — user/dns.c
+// BrainixKernel — user/dns.c
 // Минимальный DNS-клиент: A-запросы, UDP, один ответ.
 
 #include "dns.h"

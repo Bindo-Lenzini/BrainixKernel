@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — libc.h
+// BrainixKernel — libc.h
 // Минимальная libc для user-программ.
 // Реализация — user/libc.c. Никакой аллокации: всё на статике.
 

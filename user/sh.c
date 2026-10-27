@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — user/sh.c
+// BrainixKernel — user/sh.c
 // User-space shell v0.4: все команды — внешние .elf.
 // Только help и exit — builtins.
 
@@ -33,7 +33,7 @@ int main(void) {
     char line[LINE_MAX];
     stage_t stages[STAGE_MAX];
 
-    printf("BKOS user-shell v0.4\n");
+    printf("Brainix user-shell v0.4\n");
     printf("type 'help' for commands\n");
 
     for (;;) {

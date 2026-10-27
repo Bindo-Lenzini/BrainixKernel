@@ -1,7 +1,7 @@
-// BrainixKernel (BKOS) — files.h
+// BrainixKernel — files.h
 // Приложение "Files": список файлов BKFS со скроллбаром.
-#ifndef BKOS_FILES_H
-#define BKOS_FILES_H
+#ifndef BRAINIX_FILES_H
+#define BRAINIX_FILES_H
 
 #include <stdint.h>
 

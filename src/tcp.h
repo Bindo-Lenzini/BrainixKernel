@@ -1,6 +1,6 @@
-// BrainixKernel (BKOS) — tcp.h
-#ifndef BKOS_TCP_H
-#define BKOS_TCP_H
+// BrainixKernel — tcp.h
+#ifndef BRAINIX_TCP_H
+#define BRAINIX_TCP_H
 
 #include <stdint.h>
 

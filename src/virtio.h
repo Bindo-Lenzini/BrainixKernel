@@ -1,6 +1,6 @@
-// BrainixKernel (BKOS) — virtio.h
-#ifndef BKOS_VIRTIO_H
-#define BKOS_VIRTIO_H
+// BrainixKernel — virtio.h
+#ifndef BRAINIX_VIRTIO_H
+#define BRAINIX_VIRTIO_H
 
 #include <stdint.h>
 

@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — user/udp_echo.c
+// BrainixKernel — user/udp_echo.c
 // Тест RX: отправляем DNS-запрос, ждём ответ.
 
 #include "user.h"

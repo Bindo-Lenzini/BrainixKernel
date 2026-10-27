@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — initrd.c
+// BrainixKernel — initrd.c
 // Разбор вкомпилированного образа. Формат — см. scripts/mkinitrd.py.
 
 #include <stdint.h>

@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — rtc.c
+// BrainixKernel — rtc.c
 // PL031 RTC. Доступ через KVA (TTBR1).
 
 #include <stdint.h>

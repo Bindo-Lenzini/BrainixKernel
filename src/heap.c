@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — heap.c
+// BrainixKernel — heap.c
 //
 // Двухуровневый аллокатор поверх physmem:
 //

@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — libc.c
+// BrainixKernel — libc.c
 // Минимальная libc: string, stdlib, printf (подмножество).
 
 #include "libc.h"

@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — ksh.c
+// BrainixKernel — ksh.c
 // Кольцевой буфер вывода для user-программ, работающих в окне.
 
 #include <stdint.h>

@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — net.c
+// BrainixKernel — net.c
 
 #include <stdint.h>
 #include "net.h"

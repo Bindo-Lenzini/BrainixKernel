@@ -1,8 +1,8 @@
-// BrainixKernel (BKOS) — pipe.h
+// BrainixKernel — pipe.h
 // Простой pipe: кольцевой буфер на 4 KB + refcounting сторон.
 
-#ifndef BKOS_PIPE_H
-#define BKOS_PIPE_H
+#ifndef BRAINIX_PIPE_H
+#define BRAINIX_PIPE_H
 
 #include <stdint.h>
 

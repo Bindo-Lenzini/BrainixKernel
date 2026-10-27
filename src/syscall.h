@@ -1,6 +1,6 @@
-// BrainixKernel (BKOS) — syscall.h
-#ifndef BKOS_SYSCALL_H
-#define BKOS_SYSCALL_H
+// BrainixKernel — syscall.h
+#ifndef BRAINIX_SYSCALL_H
+#define BRAINIX_SYSCALL_H
 
 #include <stdint.h>
 

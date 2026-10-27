@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — wm.c
+// BrainixKernel — wm.c
 
 #include <stdint.h>
 #include "wm.h"

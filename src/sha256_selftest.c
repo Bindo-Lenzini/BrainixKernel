@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — sha256_selftest.c
+// BrainixKernel — sha256_selftest.c
 // Kernel-only self-test для SHA-256 и HMAC-SHA256.
 // Отделён от sha256.c, чтобы sha256.c можно было включать в user-space
 // без зависимости от uart_puts.

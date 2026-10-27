@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — personalize.c
+// BrainixKernel — personalize.c
 // Окно персонализации: список обоев (пресеты + initrd + медиа),
 // большое превью выбранного, кнопка Apply.
 //

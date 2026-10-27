@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — uaccess.S
+// BrainixKernel — uaccess.S
 // Ассемблерные хелперы для безопасного копирования kernel<->user.
 
 .section .text

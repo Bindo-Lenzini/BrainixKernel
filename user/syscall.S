@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — user/syscall.S
+// BrainixKernel — user/syscall.S
 .section .text
 
 .global write

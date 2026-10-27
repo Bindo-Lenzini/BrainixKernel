@@ -1,6 +1,6 @@
-# BrainixKernel (BKOS)
+# BrainixKernel
 
-A Unix-like OS, built from scratch in ARM64 assembly and C, developed
+A Unix-like kernel, built from scratch in ARM64 assembly and C, developed
 on an Apple Silicon (M1) Mac and run under QEMU emulation.
 
 ## Setup (macOS, Apple Silicon)
@@ -41,7 +41,7 @@ make run
 You should see:
 
 ```
-BrainixKernel (BKOS) booted successfully!
+BrainixKernel booted successfully!
 Welcome to your own OS.
 ```
 

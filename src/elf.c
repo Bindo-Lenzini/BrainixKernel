@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — elf.c
+// BrainixKernel — elf.c
 // Разбор ELF64 EXEC для AArch64.
 
 #include <stdint.h>

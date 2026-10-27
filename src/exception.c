@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — exception.c
+// BrainixKernel — exception.c
 // Обработчик синхронных исключений: SVC, Data/Instruction Abort,
 // recovery для uaccess. Диагностика EL0-fault'ов пишется в UART
 // и (если задача помечена to_window) в ksh-окно.

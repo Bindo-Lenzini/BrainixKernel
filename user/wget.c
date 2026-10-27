@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — user/wget.c
+// BrainixKernel — user/wget.c
 // Минимальный HTTP/1.0 клиент.
 // usage: wget <host> [port] [path]
 

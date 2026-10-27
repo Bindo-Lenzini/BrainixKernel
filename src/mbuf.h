@@ -1,7 +1,7 @@
-// BrainixKernel (BKOS) — mbuf.h
+// BrainixKernel — mbuf.h
 // Вдохновлено FreeBSD, но без легаси: только цепочка, len, cap.
-#ifndef BKOS_MBUF_H
-#define BKOS_MBUF_H
+#ifndef BRAINIX_MBUF_H
+#define BRAINIX_MBUF_H
 
 #include <stdint.h>
 

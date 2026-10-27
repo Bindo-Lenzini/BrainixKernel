@@ -1,6 +1,6 @@
-// BrainixKernel (BKOS) — mmu.h
-#ifndef BKOS_MMU_H
-#define BKOS_MMU_H
+// BrainixKernel — mmu.h
+#ifndef BRAINIX_MMU_H
+#define BRAINIX_MMU_H
 
 #include <stdint.h>
 

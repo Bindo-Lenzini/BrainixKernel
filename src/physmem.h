@@ -1,6 +1,6 @@
-// BrainixKernel (BKOS) — physmem.h
-#ifndef BKOS_PHYSMEM_H
-#define BKOS_PHYSMEM_H
+// BrainixKernel — physmem.h
+#ifndef BRAINIX_PHYSMEM_H
+#define BRAINIX_PHYSMEM_H
 
 #include <stdint.h>
 

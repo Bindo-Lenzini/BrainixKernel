@@ -1,8 +1,8 @@
-// BrainixKernel (BKOS) — font8x16_aa.h
+// BrainixKernel — font8x16_aa.h
 // Глифы 16×32 физических пикселей (8×16 логических при 2× scale).
 // 160 glyphs: 96 ASCII + 64 Cyrillic.
-#ifndef BKOS_FONT8X16_AA_H
-#define BKOS_FONT8X16_AA_H
+#ifndef BRAINIX_FONT8X16_AA_H
+#define BRAINIX_FONT8X16_AA_H
 
 #include <stdint.h>
 

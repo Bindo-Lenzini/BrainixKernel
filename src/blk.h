@@ -1,8 +1,8 @@
-// BrainixKernel (BKOS) — blk.h
+// BrainixKernel — blk.h
 // virtio-blk: чтение/запись секторов по 512 байт.
 // Поддерживает до BLK_MAX_DEV устройств (0 — основной, 1 — медиа).
-#ifndef BKOS_BLK_H
-#define BKOS_BLK_H
+#ifndef BRAINIX_BLK_H
+#define BRAINIX_BLK_H
 
 #include <stdint.h>
 

@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — tcp.c
+// BrainixKernel — tcp.c
 
 #include <stdint.h>
 #include "tcp.h"

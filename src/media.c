@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — media.c
+// BrainixKernel — media.c
 // Драйвер медиа-диска (2-й virtio-blk). Lazy-init: проверяем наличие
 // диска и читаем суперблок при первом обращении.
 

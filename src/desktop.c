@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — desktop.c
+// BrainixKernel — desktop.c
 // Иконки 48×48, подписи с тенью и AA-фоном.
 
 #include <stdint.h>

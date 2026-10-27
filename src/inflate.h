@@ -1,7 +1,7 @@
-// BrainixKernel (BKOS) — inflate.h
+// BrainixKernel — inflate.h
 // Декомпрессия zlib-потока (RFC 1950), внутри — raw deflate (RFC 1951).
-#ifndef BKOS_INFLATE_H
-#define BKOS_INFLATE_H
+#ifndef BRAINIX_INFLATE_H
+#define BRAINIX_INFLATE_H
 
 #include <stdint.h>
 

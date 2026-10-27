@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — user/dns.h
+// BrainixKernel — user/dns.h
 // Минимальный DNS-клиент.
 
 #ifndef USER_DNS_H

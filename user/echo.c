@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — user/echo.c
+// BrainixKernel — user/echo.c
 #include "user.h"
 #include "libc.h"
 

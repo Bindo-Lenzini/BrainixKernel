@@ -1,7 +1,7 @@
-// BrainixKernel (BKOS) — ksh.h
+// BrainixKernel — ksh.h
 // KernelShell: буфер вывода user-программ.
-#ifndef BKOS_KSH_H
-#define BKOS_KSH_H
+#ifndef BRAINIX_KSH_H
+#define BRAINIX_KSH_H
 
 #include <stdint.h>
 

@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — inflate.c
+// BrainixKernel — inflate.c
 // Распаковка zlib/deflate «с нуля», без libc и без malloc.
 
 #include <stdint.h>

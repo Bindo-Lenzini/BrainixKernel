@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — jpeg.c
+// BrainixKernel — jpeg.c
 // Baseline + Progressive JPEG. С graceful-degradation:
 // если какой-то прогрессивный скан падает — пропускаем его,
 // но продолжаем с остальными. В конце всегда IDCT.

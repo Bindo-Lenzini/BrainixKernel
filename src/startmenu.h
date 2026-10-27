@@ -1,6 +1,6 @@
-// BrainixKernel (BKOS) — startmenu.h
-#ifndef BKOS_STARTMENU_H
-#define BKOS_STARTMENU_H
+// BrainixKernel — startmenu.h
+#ifndef BRAINIX_STARTMENU_H
+#define BRAINIX_STARTMENU_H
 
 #include <stdint.h>
 

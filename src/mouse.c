@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — mouse.c
+// BrainixKernel — mouse.c
 // virtio-tablet через PCI. desc.addr — PA.
 
 #include <stdint.h>

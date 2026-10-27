@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — user/host.c
+// BrainixKernel — user/host.c
 // Простой DNS-резолвер в командной строке.
 
 #include "user.h"

@@ -1,6 +1,6 @@
-// BrainixKernel (BKOS) — task.h
-#ifndef BKOS_TASK_H
-#define BKOS_TASK_H
+// BrainixKernel — task.h
+#ifndef BRAINIX_TASK_H
+#define BRAINIX_TASK_H
 
 #include <stdint.h>
 #include "elf.h"

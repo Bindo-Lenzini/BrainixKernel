@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — ct.c
+// BrainixKernel — ct.c
 #include "ct.h"
 
 int ct_memcmp(const void *a, const void *b, uint32_t n) {

@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — files.c
+// BrainixKernel — files.c
 // Файловый менеджер BKFS: список, навигация, скроллбар, удаление.
 
 #include <stdint.h>

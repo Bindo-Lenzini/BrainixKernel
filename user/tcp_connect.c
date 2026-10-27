@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — user/tcp_connect.c
+// BrainixKernel — user/tcp_connect.c
 // Тест TCP connect: подключаемся к example.com:80 и рвём.
 
 #include "user.h"

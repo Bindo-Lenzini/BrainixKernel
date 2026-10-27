@@ -1,8 +1,8 @@
-// BrainixKernel (BKOS) — sha256.h
+// BrainixKernel — sha256.h
 // SHA-256 (FIPS 180-4) + HMAC-SHA256 (RFC 2104).
 // Используется в TLS 1.3: HKDF, transcript hash, Finished MAC.
-#ifndef BKOS_SHA256_H
-#define BKOS_SHA256_H
+#ifndef BRAINIX_SHA256_H
+#define BRAINIX_SHA256_H
 
 #include <stdint.h>
 

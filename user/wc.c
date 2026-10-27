@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — user/wc.c
+// BrainixKernel — user/wc.c
 // Считает строки, слова, байты из stdin.
 #include "user.h"
 #include "libc.h"

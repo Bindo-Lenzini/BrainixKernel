@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — arp.c
+// BrainixKernel — arp.c
 // С отладочным логом.
 
 #include <stdint.h>

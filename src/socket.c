@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — socket.c
+// BrainixKernel — socket.c
 
 #include <stdint.h>
 #include "socket.h"

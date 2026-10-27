@@ -1,6 +1,6 @@
-// BrainixKernel (BKOS) — gpu.h
-#ifndef BKOS_GPU_H
-#define BKOS_GPU_H
+// BrainixKernel — gpu.h
+#ifndef BRAINIX_GPU_H
+#define BRAINIX_GPU_H
 
 #include <stdint.h>
 

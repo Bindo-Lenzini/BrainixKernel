@@ -1,8 +1,8 @@
-// BrainixKernel (BKOS) — uaccess.h
+// BrainixKernel — uaccess.h
 // Безопасные копирования между kernel и user-памятью.
 
-#ifndef BKOS_UACCESS_H
-#define BKOS_UACCESS_H
+#ifndef BRAINIX_UACCESS_H
+#define BRAINIX_UACCESS_H
 
 #include <stdint.h>
 

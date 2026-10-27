@@ -1,6 +1,6 @@
-// BrainixKernel (BKOS) — win.h
-#ifndef BKOS_WIN_H
-#define BKOS_WIN_H
+// BrainixKernel — win.h
+#ifndef BRAINIX_WIN_H
+#define BRAINIX_WIN_H
 
 #include <stdint.h>
 

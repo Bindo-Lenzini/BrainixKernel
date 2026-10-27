@@ -1,6 +1,6 @@
-// BrainixKernel (BKOS) — desktop.h
-#ifndef BKOS_DESKTOP_H
-#define BKOS_DESKTOP_H
+// BrainixKernel — desktop.h
+#ifndef BRAINIX_DESKTOP_H
+#define BRAINIX_DESKTOP_H
 
 #define DI_COMPUTER     0
 #define DI_RECYCLE      1

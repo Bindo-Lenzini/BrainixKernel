@@ -1,6 +1,6 @@
-// BrainixKernel (BKOS) — sched.h
-#ifndef BKOS_SCHED_H
-#define BKOS_SCHED_H
+// BrainixKernel — sched.h
+#ifndef BRAINIX_SCHED_H
+#define BRAINIX_SCHED_H
 
 #include "task.h"
 

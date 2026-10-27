@@ -1,7 +1,7 @@
-// BrainixKernel (BKOS) — jpeg.h
+// BrainixKernel — jpeg.h
 // Baseline + Progressive JPEG в ARGB8888.
-#ifndef BKOS_JPEG_H
-#define BKOS_JPEG_H
+#ifndef BRAINIX_JPEG_H
+#define BRAINIX_JPEG_H
 
 #include <stdint.h>
 #include "png.h"

@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — sched.c
+// BrainixKernel — sched.c
 //
 // Round-robin. При переключении на user-задачу — TTBR0 с её ASID.
 // TLB не сбрасываем: записи для каждого ASID сосуществуют.

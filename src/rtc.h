@@ -1,6 +1,6 @@
-// BrainixKernel (BKOS) — rtc.h
-#ifndef BKOS_RTC_H
-#define BKOS_RTC_H
+// BrainixKernel — rtc.h
+#ifndef BRAINIX_RTC_H
+#define BRAINIX_RTC_H
 
 #include <stdint.h>
 

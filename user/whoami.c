@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — whoami.c
+// BrainixKernel — whoami.c
 // Credentials test: prints real/effective uid and gid.
 #include "libc.h"
 #include "user.h"

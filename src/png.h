@@ -1,7 +1,7 @@
-// BrainixKernel (BKOS) — png.h
+// BrainixKernel — png.h
 // Декодер изображений PNG, BMP, JPEG в формат ARGB8888 (0xAARRGGBB).
-#ifndef BKOS_PNG_H
-#define BKOS_PNG_H
+#ifndef BRAINIX_PNG_H
+#define BRAINIX_PNG_H
 
 #include <stdint.h>
 

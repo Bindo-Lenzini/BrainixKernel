@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — clipboard.c
+// BrainixKernel — clipboard.c
 
 #include "clipboard.h"
 

@@ -1,6 +1,6 @@
-// BrainixKernel (BKOS) — udp.h
-#ifndef BKOS_UDP_H
-#define BKOS_UDP_H
+// BrainixKernel — udp.h
+#ifndef BRAINIX_UDP_H
+#define BRAINIX_UDP_H
 
 #include <stdint.h>
 

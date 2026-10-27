@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — icmp.c
+// BrainixKernel — icmp.c
 // ICMPv4 Echo Request/Reply (ping).
 
 #include <stdint.h>

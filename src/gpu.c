@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — gpu.c
+// BrainixKernel — gpu.c
 // virtio-gpu. Все буферы — KVA, дескрипторы получают PA.
 
 #include <stdint.h>

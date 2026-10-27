@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — editor.c
+// BrainixKernel — editor.c
 
 #include <stdint.h>
 #include "editor.h"

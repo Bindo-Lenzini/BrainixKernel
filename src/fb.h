@@ -1,6 +1,6 @@
-// BrainixKernel (BKOS) — fb.h
-#ifndef BKOS_FB_H
-#define BKOS_FB_H
+// BrainixKernel — fb.h
+#ifndef BRAINIX_FB_H
+#define BRAINIX_FB_H
 
 #include <stdint.h>
 

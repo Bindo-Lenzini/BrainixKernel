@@ -2,7 +2,7 @@
 #include "protosw.h"
 #include "vnc.h"
 
-// BrainixKernel (BKOS) — kernel.c
+// BrainixKernel — kernel.c
 // B3: ELF-загрузка user-программ.
 
 #include <stdint.h>
@@ -362,7 +362,7 @@ void kwin_cmd_help(win_t *w) {
     win_puts(w, "  images - photos - personalize");
 }
 void kwin_cmd_ver(win_t *w) {
-    win_puts(w, "BrainixKernel OS v" BKOS_VERSION);
+    win_puts(w, "BrainixKernel OS v" BRAINIX_VERSION);
     win_puts(w, "ELF loader + per-process AS");
 }
 void kwin_cmd_tasks(win_t *w) {
@@ -748,7 +748,7 @@ static void draw_top_bar(void) {
     fb_blend_rect(0, 0, 1280, 1, 0xFFFFFFFF, 60);
     fb_draw_string_aa(16, 18, "BrainixKernel", 0xFFF0F0F0, 0);
     fb_draw_string_aa(156, 18, "OS", 0xFF7AB8FF, 0);
-    fb_draw_string_aa(200, 18, "v" BKOS_VERSION, 0xFFAAAAAA, 0);
+    fb_draw_string_aa(200, 18, "v" BRAINIX_VERSION, 0xFFAAAAAA, 0);
     {
         char buf[16];
         rtc_format_full_utc3(buf, sizeof(buf));
@@ -819,7 +819,7 @@ static void on_key(char c) {
 
 void kernel_main(uint64_t dtb) {
     uart_puts("\033[?2004l");
-    uart_puts("BrainixKernel (BKOS) booted successfully!\n");
+    uart_puts("BrainixKernel booted successfully!\n");
     uart_puts("Welcome to your own OS.\n");
 
     uart_puts("[step 7] DTB at "); uart_puthex(dtb); uart_puts("\n");
@@ -930,7 +930,7 @@ void kernel_main(uint64_t dtb) {
 
     uart_puts("[step 43] create ksh window\n");
     win_init(&g_term);
-    win_puts(&g_term, "BrainixKernel OS v" BKOS_VERSION);
+    win_puts(&g_term, "BrainixKernel OS v" BRAINIX_VERSION);
     win_puts(&g_term, "ELF loader + per-process AS");
     win_puts(&g_term, "");
     win_puts(&g_term, "Try 'sysinfo'.");

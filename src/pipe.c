@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — pipe.c
+// BrainixKernel — pipe.c
 
 #include <stdint.h>
 #include "pipe.h"

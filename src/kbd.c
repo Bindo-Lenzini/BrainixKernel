@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — kbd.c
+// BrainixKernel — kbd.c
 // virtio-keyboard через PCI. desc.addr — PA.
 
 #include <stdint.h>

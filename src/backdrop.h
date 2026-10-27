@@ -1,7 +1,7 @@
-// BrainixKernel (BKOS) — backdrop.h
+// BrainixKernel — backdrop.h
 // Liquid Glass: размытие обоев + рисование «матовых» панелей.
-#ifndef BKOS_BACKDROP_H
-#define BKOS_BACKDROP_H
+#ifndef BRAINIX_BACKDROP_H
+#define BRAINIX_BACKDROP_H
 
 #include <stdint.h>
 

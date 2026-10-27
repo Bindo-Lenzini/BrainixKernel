@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — udp.c
+// BrainixKernel — udp.c
 
 #include <stdint.h>
 #include "udp.h"
