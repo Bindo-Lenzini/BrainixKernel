@@ -1,8 +1,8 @@
 # BrainixKernel
 
-A hobby operating system kernel for AArch64, written in C and ARM64 assembly.
+An experimental operating system kernel for AArch64, written in C and ARM64 assembly.
 
-![Build](https://github.com/Bindo-Lenzini/BrainixKernel/actions/workflows/build.yml/badge.svg) ![License: GPL-2.0](https://img.shields.io/badge/License-GPL--2.0-blue.svg)
+!Build !License: GPL-2.0
 
 BrainixKernel is an experimental operating system project targeting the AArch64 architecture. It is developed primarily on Apple Silicon and designed to run on QEMU's virt machine.
 
@@ -28,7 +28,7 @@ Contributing
 License
 Overview
 
-BrainixKernel is built without relying on a hosted operating system runtime for its kernel and user-space binaries. Its build system uses a freestanding AArch64 target and links the kernel with a custom linker script.
+BrainixKernel uses a freestanding AArch64 toolchain. The kernel is linked using a custom linker script, and the repository includes kernel code, user-space programs, and scripts for generating build assets.
 
 The repository contains:
 
@@ -37,10 +37,10 @@ A linker script for the kernel image.
 User-space executables and supporting runtime code.
 Scripts for generating font data, an initial RAM filesystem, and a media image.
 QEMU configuration for virtual devices, networking, and serial output.
-A GitHub Actions workflow that builds the kernel binary.
+A GitHub Actions workflow for building the kernel binary.
 Features
 
-The current codebase includes implementations or supporting code for the following areas.
+The current codebase contains implementations or supporting code for the following areas.
 
 Subsystem	Description
 Architecture	AArch64 kernel targeting QEMU virt
@@ -51,13 +51,13 @@ User space	Freestanding C runtime, system-call stubs, shell, and utility program
 Graphics	Framebuffer, GPU-related code, window management, and desktop components
 Input	Virtual keyboard and pointer/tablet device support
 Storage	Block-device code, initrd support, and the custom bkfs filesystem
-Networking	Network-device support and code for Ethernet-related networking, ARP, DHCP, IP, ICMP, UDP, and TCP
+Networking	Network-device support and code for ARP, DHCP, IP, ICMP, UDP, and TCP
 Security	Task credentials, capability definitions, and partial access-control enforcement
 
 The presence of code in a subsystem does not necessarily mean that every expected feature, protocol, or interface is complete or fully tested.
 
 Architecture and Platform
-Target architecture
+Target Architecture
 Architecture: AArch64 (ARM64)
 Compiler target: aarch64-elf
 Virtual machine: QEMU virt
@@ -68,7 +68,7 @@ Linker: LLVM LLD
 
 The build uses freestanding compilation options, including -ffreestanding and -nostdlib, and links the kernel using linker.ld.
 
-QEMU devices
+QEMU Devices
 
 The current QEMU configuration includes:
 
@@ -86,19 +86,19 @@ text
 BrainixKernel/
 ├── .github/
 │   └── workflows/
-│       └── build.yml       # Automated build workflow
-├── initrd/                 # Initial RAM filesystem inputs and user ELF files
-├── media/                  # Media image inputs
+│       └── build.yml
+├── initrd/
+├── media/
 ├── scripts/
-│   ├── mkfont.py           # Font-data generator
-│   ├── mkinitrd.py         # Initial RAM filesystem generator
-│   └── mkmedia.py          # Media image generator
-├── src/                    # Kernel C and assembly sources
-├── user/                   # User-space runtime and programs
-├── linker.ld               # Kernel linker script
-├── Makefile                # Build and QEMU run targets
-├── mock_vnc.py             # Auxiliary VNC-related Python script
-├── project.txt             # Project notes
+│   ├── mkfont.py
+│   ├── mkinitrd.py
+│   └── mkmedia.py
+├── src/
+├── user/
+├── linker.ld
+├── Makefile
+├── mock_vnc.py
+├── project.txt
 └── README.md
 
 
@@ -113,13 +113,13 @@ The documented development environment is macOS on Apple Silicon.
 
 Install the required tools using Homebrew:
 
-```bash
+bash
 brew install qemu llvm lld python3
 
 
-Install Pillow for the Python image/font-generation tooling:
+Install Pillow for the Python image and font-generation tooling:
 
-```bash
+bash
 python3 -m pip install Pillow
 
 
@@ -138,20 +138,20 @@ Building
 
 Clone the repository and enter its directory:
 
-```bash
+bash
 git clone https://github.com/Bindo-Lenzini/BrainixKernel.git
 cd BrainixKernel
 
 
 Build the kernel:
 
-```bash
+bash
 make
 
 
 The default build target produces:
 
-```text
+text
 build/kernel.elf
 build/kernel.bin
 
@@ -160,7 +160,7 @@ build/kernel.elf is the linked kernel ELF image. build/kernel.bin is the raw bin
 
 The build also compiles user-space programs and generates data required by the kernel.
 
-Clean build
+Clean Build
 
 To remove the build directory and selected generated artifacts before rebuilding:
 
@@ -171,7 +171,7 @@ make
 
 Note that the current clean target does not remove every generated file, including disk.img.
 
-Linux build configuration
+Linux Build Configuration
 
 The Makefile defaults OBJCOPY to a Homebrew-specific path. On systems where llvm-objcopy is installed elsewhere, override it explicitly:
 
@@ -180,9 +180,7 @@ make clean
 make OBJCOPY=llvm-objcopy
 
 
-This overrides the configured executable path without modifying the Makefile.
-
-The QEMU display arguments currently use the macOS Cocoa backend. Building on Linux and running the graphical virtual machine are separate concerns; the default display configuration may need to be adapted for a Linux host.
+The QEMU display arguments currently use the macOS Cocoa backend. The default display configuration may need to be adapted for a Linux host.
 
 Running in QEMU
 
@@ -196,10 +194,7 @@ The run target builds the required kernel and generated images, then launches qe
 
 The virtual machine is configured with the kernel binary, block devices, a network device, serial output, and a graphical display.
 
-Generated disk images
-
-The current build system uses these image files:
-
+Generated Disk Images
 File	Purpose
 media.img	Generated from the contents of media/
 disk.img	Empty 16 MiB disk image created by the Makefile
@@ -271,7 +266,7 @@ The documented credential inheritance path copies credentials when a task is for
 
 User-space programs can query several identity values through system calls, including UID, effective UID, GID, and effective GID.
 
-Access control
+Access Control
 
 The documented access-control implementation is partial:
 
@@ -316,29 +311,29 @@ These limitations are relevant when evaluating the project's current functionali
 
 Roadmap
 
-The following items are carried forward from the project's existing development plan. They are goals, not claims of completed functionality.
+The following items are goals, not claims of completed functionality.
 
-Filesystem and system interfaces
+Filesystem and System Interfaces
 Add per-inode mode, UID, and GID metadata to bkfs.
 Implement stat(2), chmod(2), and chown(2).
 Add SYS_KILL with capability and same-UID checks.
 Add SYS_SETUID and SYS_SETGID.
 Implement poll() and select().
 Add nanosleep, clock_gettime, and proper timer interrupts.
-Memory management and scheduling
+Memory Management and Scheduling
 Implement mmap, demand paging, and a page cache.
 Develop a more advanced scheduler, such as MLFQ or a CFS-like design.
 Add wait queues where required by the scheduler and blocking operations.
-Hardening and user space
+Hardening and User Space
 Investigate W^X memory protections for user and kernel mappings.
 Add stack canaries and appropriate ARMv8-A privilege protections.
 Evaluate ports of musl libc and BusyBox.
-Multiprocessor support
+Multiprocessor Support
 Implement spinlocks and memory-ordering primitives.
 Introduce per-CPU state.
 Add inter-processor interrupts through the GIC.
 Validate concurrent kernel operations under SMP.
-Advanced security and filesystems
+Advanced Security and Filesystems
 Investigate KASLR.
 Develop a mandatory-access-control or LSM-style hook layer.
 Consider chroot(2).
