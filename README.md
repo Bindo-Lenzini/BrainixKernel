@@ -1,4 +1,4 @@
-BrainixKernel
+# BrainixKernel
 
 A hobby operating system kernel for AArch64, written in C and ARM64 assembly.
 
@@ -113,13 +113,13 @@ The documented development environment is macOS on Apple Silicon.
 
 Install the required tools using Homebrew:
 
-bash
+```bash
 brew install qemu llvm lld python3
 
 
 Install Pillow for the Python image/font-generation tooling:
 
-bash
+```bash
 python3 -m pip install Pillow
 
 
@@ -138,20 +138,20 @@ Building
 
 Clone the repository and enter its directory:
 
-bash
+```bash
 git clone https://github.com/Bindo-Lenzini/BrainixKernel.git
 cd BrainixKernel
 
 
 Build the kernel:
 
-bash
+```bash
 make
 
 
 The default build target produces:
 
-text
+```text
 build/kernel.elf
 build/kernel.bin
 
