@@ -46,9 +46,12 @@ static task_t *alloc_task(const char *name,
     task_t *t = (task_t *)kmalloc(sizeof(task_t));
     if (!t) return 0;
 
+    t->cred = cred_alloc_root();
+    if (!t->cred) { kfree(t); return 0; }
+
     uint64_t kpages = (TASK_STACK_SIZE + PAGE_SIZE - 1) / PAGE_SIZE;
     uint8_t *kstack_kva = (uint8_t *)phys_alloc_pages(kpages);
-    if (!kstack_kva) { kfree(t); return 0; }
+    if (!kstack_kva) { cred_free(t->cred); kfree(t); return 0; }
 
     copy_name(t, name);
     t->id         = g_next_id++;
@@ -94,10 +97,10 @@ task_t *task_create_user(const char *name, const void *code, unsigned long code_
     if (!t) return 0;
 
     uint8_t *code_page_kva = (uint8_t *)phys_alloc_page();
-    if (!code_page_kva) { kfree(t); return 0; }
+    if (!code_page_kva) { cred_free(t->cred); kfree(t); return 0; }
 
     uint8_t *ustack_kva = (uint8_t *)phys_alloc_page();
-    if (!ustack_kva) { kfree(t); return 0; }
+    if (!ustack_kva) { cred_free(t->cred); kfree(t); return 0; }
 
     uint64_t code_pa   = KVA_TO_PA(code_page_kva);
     uint64_t ustack_pa = KVA_TO_PA(ustack_kva);
@@ -108,10 +111,10 @@ task_t *task_create_user(const char *name, const void *code, unsigned long code_
     }
 
     uint64_t l0_pa = mmu_create_user_as();
-    if (!l0_pa) { kfree(t); return 0; }
+    if (!l0_pa) { cred_free(t->cred); kfree(t); return 0; }
 
     uint16_t asid = mmu_alloc_asid();
-    if (asid == 0) { kfree(t); return 0; }
+    if (asid == 0) { cred_free(t->cred); kfree(t); return 0; }
 
     mmu_map_user_page(l0_pa, USER_CODE_BASE, code_pa, /*is_code=*/1, asid);
     mmu_map_user_page(l0_pa, USER_STACK_TOP - PAGE_SIZE, ustack_pa, /*is_code=*/0, asid);
@@ -323,6 +326,9 @@ task_t *task_fork_clone(task_t *parent, uint64_t new_l0, uint16_t new_asid,
         uint8_t *d = (uint8_t *)child;
         for (uint64_t i = 0; i < sizeof(task_t); i++) d[i] = s[i];
     }
+
+    child->cred = cred_copy(parent->cred);
+    if (!child->cred) { kfree(child); return 0; }
 
     child->id         = g_next_id++;
     child->state      = TASK_READY;

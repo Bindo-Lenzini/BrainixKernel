@@ -12,3 +12,9 @@ build/
 BrainixKernel*.txt
 brainix_kernel.txt
 =
+
+# Build artifacts
+initrd/*.elf
+brainix_dump.txt
+initrd/*.elf
+brainix_dump.txt

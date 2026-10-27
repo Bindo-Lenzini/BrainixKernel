@@ -13,7 +13,7 @@ NET_PCAP   := net.pcap
 
 CC      := clang
 LD      := ld.lld
-OBJCOPY := /opt/homebrew/opt/llvm/bin/llvm-objcopy
+OBJCOPY ?= /opt/homebrew/opt/llvm/bin/llvm-objcopy
 QEMU    := qemu-system-aarch64
 PYTHON  := python3
 
@@ -56,6 +56,7 @@ C_SOURCES := \
     $(SRC_DIR)/dtb.c \
     $(SRC_DIR)/elf.c \
     $(SRC_DIR)/task.c \
+    $(SRC_DIR)/cred.c \
     $(SRC_DIR)/sched.c \
     $(SRC_DIR)/syscall.c \
     $(SRC_DIR)/pipe.c \
@@ -121,7 +122,7 @@ USER_OBJS_BASE := \
     $(BUILD_DIR)/user/libc.o \
     $(BUILD_DIR)/user/dns.o
 
-USER_PROGS := test sh echo wc ls cat udp_send udp_echo host tcp_connect wget
+USER_PROGS := test sh echo wc ls cat whoami udp_send udp_echo host tcp_connect wget
 
 .PHONY: all clean run
 

@@ -63,3 +63,25 @@ nothing more. Natural next steps, roughly in order:
 3. GICv2 interrupt controller setup (so timers/interrupts work)
 4. A simple physical memory allocator
 5. MMU setup and virtual memory
+
+## Security model
+BrainixKernel provides a minimal UNIX-like privileges model.
+- **Credentials**: Each task has `struct cred` (`src/cred.h`) with `uid/euid/suid`, `gid/egid/sgid`, and Linux-style capability bitmasks.
+- **Inheritance**: `fork()` inherits credentials via `cred_copy()`.
+- **Syscalls**: `SYS_GETUID`, `SYS_GETEUID`, `SYS_GETGID`, `SYS_GETEGID` expose them to userland (test: `user/whoami.c`).
+- **Enforcement**: `sys_open()` denies `O_CREAT`, `O_TRUNC`, or writable opens for non-root users.
+
+### Roadmap (Security)
+1. Add per-inode `mode/uid/gid` to bkfs; wire `stat/chmod/chown`.
+2. Add `SYS_KILL` and enforce `CAP_KILL`.
+3. W^X mappings, Stack canaries, PAN/PXN.
+4. KASLR, MAC/LSM hooks, `chroot(2)`.
+
+## Build on Linux / CI
+The `Makefile` allows overriding the macOS `OBJCOPY` path:
+```bash
+OBJCOPY=llvm-objcopy make
+CI (.github/workflows/build.yml) automates this on ubuntu-latest using a font shim.
+
+SMP note
+The kernel is currently single-core. QEMU can be started with -smp 4 once spinlocks, barriers, and IPIs are implemented.

@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 #include "elf.h"
+#include "cred.h"
 
 #define TASK_NAME_MAX   16
 #define TASK_STACK_SIZE 8192
@@ -66,6 +67,7 @@ typedef struct task {
     uint64_t      parent_id;
     uint64_t      exit_code;
     task_fd_t     fds[TASK_MAX_FDS];
+    struct cred  *cred;
 } task_t;
 
 task_t *task_create(const char *name, void (*fn)(void));

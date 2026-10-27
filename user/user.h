@@ -22,6 +22,10 @@
 #define SYS_RECVFROM 15
 #define SYS_BIND     16
 #define SYS_CONNECT  17
+#define SYS_GETUID   23
+#define SYS_GETEUID  24
+#define SYS_GETGID   25
+#define SYS_GETEGID  26
 
 #define STDIN_FILENO  0
 #define STDOUT_FILENO 1
@@ -58,6 +62,18 @@ long sendto(int fd, const void *buf, unsigned long len,
             unsigned short dst_port_be, const unsigned char dst_ip[4]);
 long recvfrom(int fd, void *buf, unsigned long len,
               unsigned short *src_port_be, unsigned char src_ip[4]);
+
+// Credentials (uid/gid) — inline stubs.
+static inline long __bk_syscall0(long nr) {
+    register long x0 __asm__("x0");
+    register long x8 __asm__("x8") = nr;
+    __asm__ volatile ("svc #0" : "=r"(x0) : "r"(x8) : "memory");
+    return x0;
+}
+static inline long getuid(void)  { return __bk_syscall0(SYS_GETUID); }
+static inline long geteuid(void) { return __bk_syscall0(SYS_GETEUID); }
+static inline long getgid(void)  { return __bk_syscall0(SYS_GETGID); }
+static inline long getegid(void) { return __bk_syscall0(SYS_GETEGID); }
 
 #define AF_INET    2
 #define SOCK_DGRAM 2

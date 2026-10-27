@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include "syscall.h"
 #include "task.h"
+#include "cred.h"
 #include "sched.h"
 #include "initrd.h"
 #include "bkfs.h"
@@ -192,6 +193,15 @@ static uint64_t sys_open(const char *user_name, int flags) {
     int create  = (flags & BKFS_O_CREAT) ? 1 : 0;
     int trunc   = (flags & BKFS_O_TRUNC) ? 1 : 0;
     int writable = (flags & (BKFS_O_WRONLY | BKFS_O_RDWR)) ? 1 : 0;
+
+    // --- Access control (temporary policy) ---
+    // bkfs does not expose per-inode uid/gid/mode yet, so the safest
+    // policy is: non-root may only open files read-only.
+    task_t *cur = sched_current();
+    if (!cur || !cur->cred) return (uint64_t)-1;
+    if (cur->cred->euid != 0 && (create || trunc || writable)) {
+        return (uint64_t)-1;
+    }
 
     if (bkfs_is_ready()) {
         int inode = bkfs_open(kname);
@@ -790,6 +800,30 @@ static uint64_t sys_recv(int fd, void *user_buf, size_t max_len) {
     return (uint64_t)got;
 }
 
+static uint64_t sys_getuid(void) {
+    task_t *cur = sched_current();
+    if (!cur || !cur->cred) return (uint64_t)-1;
+    return (uint64_t)cur->cred->uid;
+}
+
+static uint64_t sys_geteuid(void) {
+    task_t *cur = sched_current();
+    if (!cur || !cur->cred) return (uint64_t)-1;
+    return (uint64_t)cur->cred->euid;
+}
+
+static uint64_t sys_getgid(void) {
+    task_t *cur = sched_current();
+    if (!cur || !cur->cred) return (uint64_t)-1;
+    return (uint64_t)cur->cred->gid;
+}
+
+static uint64_t sys_getegid(void) {
+    task_t *cur = sched_current();
+    if (!cur || !cur->cred) return (uint64_t)-1;
+    return (uint64_t)cur->cred->egid;
+}
+
 uint64_t syscall_dispatch(uint64_t sp) {
     uint64_t *f  = (uint64_t *)sp;
     uint64_t nr  = f[8];
@@ -825,6 +859,10 @@ uint64_t syscall_dispatch(uint64_t sp) {
                                               (uint16_t)a2);
     if (nr == SYS_SEND)     ret = sys_send((int)a0, (const void *)a1, (size_t)a2);
     if (nr == SYS_RECV)     ret = sys_recv((int)a0, (void *)a1, (size_t)a2);
+    if (nr == SYS_GETUID)   ret = sys_getuid();
+    if (nr == SYS_GETEUID)  ret = sys_geteuid();
+    if (nr == SYS_GETGID)   ret = sys_getgid();
+    if (nr == SYS_GETEGID)  ret = sys_getegid();
 
     f[0] = ret;
     return sp;

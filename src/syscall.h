@@ -24,6 +24,10 @@
 #define SYS_CONNECT  17
 #define SYS_SEND     18
 #define SYS_RECV     19
+#define SYS_GETUID   23
+#define SYS_GETEUID  24
+#define SYS_GETGID   25
+#define SYS_GETEGID  26
 
 uint64_t syscall_dispatch(uint64_t sp);
 

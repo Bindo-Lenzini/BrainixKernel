@@ -1,0 +1,14 @@
+name: build
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y clang lld llvm python3 fonts-dejavu-core
+      - run: sudo mkdir -p /System/Library/Fonts && sudo cp /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf /System/Library/Fonts/SFNSMono.ttf
+      - run: make clean && make OBJCOPY=llvm-objcopy
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kernel-bin
+          path: build/kernel.bin
