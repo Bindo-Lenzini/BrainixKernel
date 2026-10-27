@@ -1,87 +1,100 @@
 # BrainixKernel
 
-A Unix-like kernel, built from scratch in ARM64 assembly and C, developed
-on an Apple Silicon (M1) Mac and run under QEMU emulation.
+A Unix-like **kernel**, built from scratch in ARM64 assembly and C, developed on an Apple Silicon (M1) Mac and run under QEMU emulation.
+
+[![build](https://github.com/Bindo-Lenzini/BrainixKernel/actions/workflows/build.yml/badge.svg)](https://github.com/Bindo-Lenzini/BrainixKernel/actions/workflows/build.yml)
+[![License: GPL-2.0](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt)
+
+## Features
+
+- 🖥️ **GUI Subsystem**: Custom window manager, virtual framebuffer, virtio-gpu, keyboard/mouse input.
+- 🌐 **Networking**: TCP/IP stack, virtio-net, ARP, DHCP, DNS, ICMP, basic socket API.
+- 🗄️ **Storage & VFS**: Custom `bkfs` filesystem, initrd, block device abstraction.
+- ⚙️ **Processes**: `fork`, `exec`, `wait`, pipes, file descriptors, and POSIX-like signals.
+- 🔒 **Security**: UNIX-style credentials (`uid`/`gid`), Linux-style capabilities, and VFS access control.
 
 ## Setup (macOS, Apple Silicon)
 
-Install the tools via Homebrew:
+Install the required tools via Homebrew:
 
 ```bash
-brew install qemu llvm lld
-```
+brew install qemu llvm lld python3
+pip3 install pillow
+Clang on Apple Silicon can already cross-compile for aarch64-elf, so no separate GNU cross-toolchain is required.
 
-Clang on Apple Silicon can already cross-compile for `aarch64-elf`,
-so no separate GNU cross-toolchain is required.
+Build & Run
+To build the kernel and boot it in QEMU:
 
-## Project layout
-
-```
-BrainixKernel/
-├── src/
-│   ├── _start.s     # ARM64 boot stub — sets up the stack, jumps to C
-│   └── kernel.c      # Kernel entry point, UART "hello world"
-├── linker.ld          # Places the kernel at QEMU virt's load address
-├── Makefile
-└── README.md
-```
-
-## Build
-
-```bash
-make
-```
-
-## Run
-
-```bash
-make run
-```
-
-You should see:
-
-```
-BrainixKernel booted successfully!
-Welcome to your own kernel.
-```
-
-Press `Ctrl-A` then `X` to quit QEMU.
-
-## Clean
-
-```bash
+bash
 make clean
-```
+make
+make run
+Welcome to your own kernel.
 
-## What's next
+Project Layout
+text
+BrainixKernel/
+├── src/               # Kernel source code (C and Assembly)
+├── user/              # Userland programs (libc, shell, network utils)
+├── scripts/           # Build scripts (font generator, initrd builder)
+├── linker.ld          # Kernel linker script
+└── Makefile           # Build system
+Security Model
+BrainixKernel provides a minimal UNIX-like privileges model, in the spirit of Linux/XNU but drastically smaller.
 
-This is the smallest possible kernel — it boots and prints a message,
-nothing more. Natural next steps, roughly in order:
+Credentials
+Each task owns a struct cred *cred (see src/cred.h) holding:
 
-1. Exception level handling (drop from EL2 to EL1 cleanly)
-2. Exception vector table + basic exception handlers
-3. GICv2 interrupt controller setup (so timers/interrupts work)
-4. A simple physical memory allocator
-5. MMU setup and virtual memory
+uid/euid/suid, gid/egid/sgid — real, effective and saved IDs.
 
-## Security model
-BrainixKernel provides a minimal UNIX-like privileges model.
-- **Credentials**: Each task has `struct cred` (`src/cred.h`) with `uid/euid/suid`, `gid/egid/sgid`, and Linux-style capability bitmasks.
-- **Inheritance**: `fork()` inherits credentials via `cred_copy()`.
-- **Syscalls**: `SYS_GETUID`, `SYS_GETEUID`, `SYS_GETGID`, `SYS_GETEGID` expose them to userland (test: `user/whoami.c`).
-- **Enforcement**: `sys_open()` denies `O_CREAT`, `O_TRUNC`, or writable opens for non-root users.
+cap_effective, cap_permitted — Linux-style capability bitmask.
 
-### Roadmap (Security)
-1. Add per-inode `mode/uid/gid` to bkfs; wire `stat/chmod/chown`.
-2. Add `SYS_KILL` and enforce `CAP_KILL`.
-3. W^X mappings, Stack canaries, PAN/PXN.
-4. KASLR, MAC/LSM hooks, `chroot(2)`.
+fork() inherits the parent's credentials via cred_copy(). On task creation, credentials default to root (uid=0, all capabilities set). Syscalls SYS_GETUID, SYS_GETEUID, SYS_GETGID, SYS_GETEGID expose them to userland (see user/whoami.c).
 
-## Build on Linux / CI
-The `Makefile` allows overriding the macOS `OBJCOPY` path:
-```bash
+Capabilities & Access Control
+A Linux-style capability mask is defined (CAP_CHOWN, CAP_KILL, CAP_SYS_ADMIN, etc.). Enforcement is currently partial:
+
+sys_open() denies O_CREAT / O_TRUNC / writable opens for any non-root euid.
+
+sys_open() allows all read-only opens.
+
+bkfs does not yet store per-inode uid/gid/mode bits.
+
+Roadmap
+Short-term
+□ VFS: Store mode, uid, gid in the bkfs inode; wire stat(2), chmod(2), chown(2).
+□ Security: Add SYS_KILL and enforce CAP_KILL / same-uid rule. Add SYS_SETUID / SYS_SETGID.
+□ I/O Multiplexing: Implement poll() and select() for asynchronous I/O.
+□ Time: Add nanosleep, clock_gettime, and proper timer interrupts.
+Medium-term
+□ Memory: Implement mmap / demand paging / page cache (the biggest gap after SMP).
+□ Scheduler: Move from round-robin to MLFQ or CFS-like scheduler with wait-queues.
+□ Hardening: W^X for user and kernel mappings, Stack canaries, PAN / PXN (ARMv8-A).
+□ Userland: Port musl libc and BusyBox.
+Long-term
+□ SMP: Spinlocks, memory barriers, per-CPU state, IPIs via GIC.
+□ Advanced Security: KASLR, MAC/LSM hook layer (open, exec, kill), chroot(2).
+□ Filesystems: journaling for bkfs, tmpfs, procfs/sysfs.
+Build on Linux / CI
+The Makefile defaults OBJCOPY to Homebrew's llvm-objcopy (macOS path), but it is overridable:
+
+bash
 OBJCOPY=llvm-objcopy make
-CI (.github/workflows/build.yml) automates this on ubuntu-latest using a font shim.
+CI (.github/workflows/build.yml) automates this on ubuntu-latest. It uses a font shim for scripts/mkfont.py since it looks for a macOS system font by default:
 
-SMP note
-The kernel is currently single-core. QEMU can be started with -smp 4 once spinlocks, barriers, and IPIs are implemented.
+bash
+sudo mkdir -p /System/Library/Fonts
+sudo cp /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf /System/Library/Fonts/SFNSMono.ttf
+SMP Note
+The kernel is currently single-core (-smp 1 is implicit). The QEMU virt machine can be started with -smp 4 to exercise SMP once spinlocks, memory barriers, per-CPU state and IPIs land. This is a documented future work item, not wired up yet.
+
+text
+
+### Шаг 3. Отправь в Git
+После того как выйдешь из редактора (после `Ctrl + X`), вернешься в терминал. Там выполни:
+
+```bash
+cd ~/BrainixKernel
+git add README.md
+git commit -m "docs: complete README rewrite — features, security, roadmap"
+git push origin main
