@@ -39,14 +39,14 @@ int cred_may_access(const struct cred *c, mode_t file_mode,
     // If file uid matches euid, use owner bits.
     if (c->euid == file_uid) {
         mode_t bits = (file_mode >> 6) & 7;
-        return (bits & want) == want;
+        return (bits & (mode_t)want) == (mode_t)want;
     }
     // If file gid matches egid, use group bits.
     if (c->egid == file_gid) {
         mode_t bits = (file_mode >> 3) & 7;
-        return (bits & want) == want;
+        return (bits & (mode_t)want) == (mode_t)want;
     }
     // Otherwise use other bits.
     mode_t bits = file_mode & 7;
-    return (bits & want) == want;
+    return (bits & (mode_t)want) == (mode_t)want;
 }
