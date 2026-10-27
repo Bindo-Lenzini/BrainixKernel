@@ -24,15 +24,11 @@ Clang on Apple Silicon can already cross-compile for aarch64-elf, so no separate
 
 Build & Run
 To build the kernel and boot it in QEMU:
-
-bash
 make clean
 make
 make run
 Welcome to your own kernel.
-
 Project Layout
-text
 BrainixKernel/
 ├── src/               # Kernel source code (C and Assembly)
 ├── user/              # Userland programs (libc, shell, network utils)
@@ -77,24 +73,9 @@ Long-term
 □ Filesystems: journaling for bkfs, tmpfs, procfs/sysfs.
 Build on Linux / CI
 The Makefile defaults OBJCOPY to Homebrew's llvm-objcopy (macOS path), but it is overridable:
-
-bash
 OBJCOPY=llvm-objcopy make
 CI (.github/workflows/build.yml) automates this on ubuntu-latest. It uses a font shim for scripts/mkfont.py since it looks for a macOS system font by default:
-
-bash
 sudo mkdir -p /System/Library/Fonts
 sudo cp /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf /System/Library/Fonts/SFNSMono.ttf
 SMP Note
 The kernel is currently single-core (-smp 1 is implicit). The QEMU virt machine can be started with -smp 4 to exercise SMP once spinlocks, memory barriers, per-CPU state and IPIs land. This is a documented future work item, not wired up yet.
-
-text
-
-### Шаг 3. Отправь в Git
-После того как выйдешь из редактора (после `Ctrl + X`), вернешься в терминал. Там выполни:
-
-```bash
-cd ~/BrainixKernel
-git add README.md
-git commit -m "docs: complete README rewrite — features, security, roadmap"
-git push origin main
