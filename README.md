@@ -42,7 +42,7 @@ You should see:
 
 ```
 BrainixKernel booted successfully!
-Welcome to your own OS.
+Welcome to your own kernel.
 ```
 
 Press `Ctrl-A` then `X` to quit QEMU.
