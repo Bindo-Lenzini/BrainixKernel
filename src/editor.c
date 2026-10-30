@@ -4,6 +4,7 @@
 #include "editor.h"
 #include "fb.h"
 #include "bkfs.h"
+#include "cred.h"
 #include "clipboard.h"
 
 #define CLR_BODY     0xFF101C2E
@@ -77,27 +78,32 @@ static void editor_scroll_to_cursor(editor_t *e) {
 }
 
 // ---- Публичный API ----
-void editor_open(editor_t *e, const char *name) {
+int editor_open(editor_t *e, const char *name) {
     str_copy_n(e->name, name, 64);
     e->len = 0; e->cursor = 0;
     e->cursor_visible = 1; e->dirty = 0;
     e->status_msg = 0;
     e->scroll_line = 0;
     e->visible_rows = 20;
-    int n = bkfs_read(name, e->buf, EDIT_MAX - 1);
+    int n = bkfs_read_for(name, e->buf, EDIT_MAX - 1, cred_ui());
+    if (n == BKFS_EINVAL || n == BKFS_EIO) {
+        e->name[0] = 0;
+        return 0;
+    }
     if (n > 0) { e->len = (uint32_t)n; e->buf[e->len] = 0; }
     else       { e->len = 0; e->buf[0] = 0; }
     e->cursor = e->len;
+    return 1;
 }
 
 void editor_close(editor_t *e) { e->name[0] = 0; e->len = 0; }
 int  editor_is_open(const editor_t *e) { return e->name[0] != 0; }
 
 int editor_save(editor_t *e) {
-    int r = bkfs_create(e->name);
+    int r = bkfs_create_for(e->name, cred_ui(), BKFS_DEFAULT_MODE);
     if (r == BKFS_EEXIST) r = BKFS_OK;
     if (r != BKFS_OK) { e->status_msg = 2; return 0; }
-    int w = bkfs_write(e->name, e->buf, e->len);
+    int w = bkfs_write_for(e->name, e->buf, e->len, cred_ui());
     if (w < 0) { e->status_msg = 2; return 0; }
     e->dirty = 0; e->status_msg = 1;
     return 1;

@@ -89,8 +89,7 @@ int proto_tcp_recv(void *ctx, void *buf, int max_len, struct sockaddr *from) {
 
 int proto_tcp_close(void *ctx) {
     task_fd_t *f = (task_fd_t *)ctx;
-    tcp_conn_t *c = tcp_get(f->tcp_idx);
-    if (c) { tcp_close(c); tcp_free(f->tcp_idx); }
+    tcp_free(f->tcp_idx);
     return 0;
 }
 

@@ -21,6 +21,7 @@
 
 typedef struct {
     int      used;
+    uint16_t refs;
     int      state;
 
     uint8_t  local_ip[4];
@@ -43,6 +44,7 @@ typedef struct {
 } tcp_conn_t;
 
 int  tcp_alloc(void);
+void tcp_ref(int idx);
 void tcp_free(int idx);
 tcp_conn_t *tcp_get(int idx);
 

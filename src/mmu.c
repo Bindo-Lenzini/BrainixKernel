@@ -114,8 +114,8 @@ static uint64_t l3_hi_tables[L3_COUNT][512] __attribute__((aligned(4096)));
 // ---------- TTBR0 по умолчанию (пустая) ----------
 static uint64_t l0_empty[512] __attribute__((aligned(4096)));
 
-// ---------- ASID-счётчик ----------
-static uint16_t g_next_asid = ASID_USER_FIRST;
+// ---------- ASID allocation ----------
+static uint64_t g_asid_bitmap[4];
 
 extern char __text_start,   __text_end;
 extern char __rodata_start, __rodata_end;
@@ -264,8 +264,22 @@ uint64_t mmu_get_empty_l0_pa(void) {
 // ============================================================
 
 uint16_t mmu_alloc_asid(void) {
-    if (g_next_asid > ASID_MAX) return 0;
-    return g_next_asid++;
+    for (uint16_t asid = ASID_USER_FIRST; asid <= ASID_MAX; asid++) {
+        uint64_t mask = 1ull << (asid % 64);
+        uint64_t *word = &g_asid_bitmap[asid / 64];
+        if (!(*word & mask)) {
+            *word |= mask;
+            return asid;
+        }
+    }
+    return 0;
+}
+
+void mmu_release_asid(uint16_t asid) {
+    if (asid < ASID_USER_FIRST || asid > ASID_MAX) return;
+
+    mmu_flush_asid(asid);
+    g_asid_bitmap[asid / 64] &= ~(1ull << (asid % 64));
 }
 
 void mmu_switch_ttbr0(uint64_t l0_pa, uint16_t asid) {
@@ -295,6 +309,35 @@ uint64_t mmu_create_user_as(void) {
     if (!l0_kva) return 0;
     mem_zero(l0_kva, 4096);
     return KVA_TO_PA(l0_kva);
+}
+
+static void release_user_page(void *page) {
+    if (phys_get_ref(page) != 0) phys_free_page(page);
+}
+
+static void destroy_user_tables(uint64_t *table, int level) {
+    for (int i = 0; i < 512; i++) {
+        uint64_t entry = table[i];
+        if (!(entry & PTE_VALID)) continue;
+
+        void *page = PA_TO_KVA(entry & PTE_LEAF_PA_MASK);
+        if (level == 3) {
+            release_user_page(page);
+        } else {
+            destroy_user_tables((uint64_t *)page, level + 1);
+            release_user_page(page);
+        }
+        table[i] = 0;
+    }
+}
+
+void mmu_destroy_user_as(uint64_t l0_pa, uint16_t asid) {
+    if (!l0_pa) return;
+
+    if (asid != 0) mmu_flush_asid(asid);
+    uint64_t *l0 = (uint64_t *)PA_TO_KVA(l0_pa);
+    destroy_user_tables(l0, 0);
+    phys_free_page((void *)l0);
 }
 
 static inline uint64_t idx_l0(uint64_t va) { return (va >> 39) & 0x1FF; }

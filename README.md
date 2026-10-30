@@ -73,11 +73,32 @@ compliance, complete functionality, or comprehensive testing.
 - **COW fork:** made cloning transactional so parent mappings are changed only
   after a successful clone; partial child mappings and acquired page references
   are released if cloning fails.
+- **`exec` cleanup:** failed image/stack setup now releases the temporary
+  address space and ASID without replacing the running program. Successful
+  `exec` switches to the new address space before reclaiming the old one.
 - **Pipe failure handling:** roll back pipe and file-descriptor resources when
   returning descriptors to an invalid user pointer fails.
-- **Regression tests:** added host-side malformed-ELF cases and QEMU guest
-  checks for credentials, invalid user pointers, pipe rollback, and COW
-  isolation.
+- **File descriptor access modes:** reject invalid `open` flag combinations,
+  deny writable opens of the read-only initrd, and enforce read/write mode on
+  descriptors.
+- **BKFS permissions:** BKFS v3 stores a 16-bit UID, 16-bit GID, and mode in
+  each inode. `open`, `read`, `write`, truncation, `exec`, `chmod`, `chown`,
+  listing, and deletion apply credential checks. Supplementary groups are
+  inherited across `fork`, limited to 8, and can only be changed by a process
+  with `CAP_SETGID`. Existing v2 files migrate as root-owned mode `0644`;
+  migration is resumable and incompatible disks are not autoformatted.
+- **Kernel UI filesystem access:** the kernel shell, editor, and file manager
+  use an explicit unprivileged UID/GID 1000 identity rather than inheriting the
+  interrupted task's credentials. The UI cannot format BKFS or bypass per-file
+  access checks through its built-in file operations.
+- **Regression tests:** host tests cover BKFS metadata, owner/group/other and
+  supplementary-group decisions, `chmod`/`chown`, protected file operations,
+  v2 migration, and interrupted migration. QEMU guest tests verify unprivileged
+  `chmod`/`chown` behavior, rejection of execution without an execute bit,
+  supplementary-group privilege checks, `O_RDONLY | O_TRUNC` rejection
+  without modifying a file, writable initrd denial, and invalid open flags,
+  alongside malformed-ELF cases, invalid user pointers, pipe rollback, COW
+  isolation, repeated `exec` and fork/wait cycles, and reaping a faulted child.
 - **Continuous integration:** CI runs the host ELF tests, builds the kernel,
   and boots a headless QEMU smoke test with 512 MiB of guest RAM. The regular
   graphical QEMU configuration remains at 2 GiB.
@@ -150,8 +171,8 @@ snapshot; guest disk writes are not persisted to `disk.img`.
 
 | Check | What it covers |
 | --- | --- |
-| `make host-test` | ELF parser cases including W+X, invalid ranges, invalid entry points, and page overlaps |
-| `make smoke` | QEMU boot, kernel self-tests, credentials, user-pointer handling, pipe rollback, and COW isolation |
+| `make host-test` | ELF parser cases plus BKFS metadata, owner/group/supplementary-group permission, `chmod`/`chown`, and v2 migration cases |
+| `make smoke` | QEMU boot, kernel self-tests, credentials, BKFS user-file creation, `chmod`/`chown`, execute-bit denial, supplementary-group privilege guard, initrd write denial, invalid open flags, user-pointer handling, pipe rollback, COW isolation, 260 repeated `exec` and fork/wait cycles, and a faulted-child teardown check |
 | GitHub Actions | Host tests, kernel build, and the headless QEMU smoke target |
 
 Tests cover selected regression scenarios. They do not prove the absence of
@@ -162,13 +183,23 @@ review.
 
 Security is an active area of development, not a finished property of the
 kernel. Current work includes targeted checks around user pointers, ELF
-permissions, COW cloning, and default task credentials. Important limitations
-remain:
+permissions, COW cloning, default task credentials, and BKFS read/write
+permissions. Important limitations remain:
 
-- Credential, capability, and filesystem authorization enforcement is partial.
-- Address-space teardown and several task/allocation-failure cleanup paths
-  still need work.
-- ASIDs are not reused after exhaustion.
+- BKFS stores UID/GID values up to 65535 and supports up to 8 supplementary
+  groups. Directories, `umask`, ACLs, and POSIX errno reporting are not
+  implemented. Initrd remains read-only, has no per-file metadata, and treats
+  `.elf` entries as executable based on their name.
+- The kernel UI has a fixed unprivileged identity rather than login/session
+  credentials. Low-level BKFS sector/inode APIs remain trusted kernel
+  interfaces; UI code must use the credential-checked high-level operations.
+- Credential and capability enforcement across syscalls remains partial.
+- Address spaces, kernel stacks, credentials, and inherited descriptors are
+  reclaimed when a parent reaps a dead child; parentless dead tasks are
+  reclaimed on a later syscall-triggered scheduling point. Orphan adoption
+  semantics are not implemented.
+- ASIDs are recycled after `exec` and wait/reap; more lifecycle and exhaustion
+  testing is still needed.
 - Writable aliases and kernel mappings need broader W^X review.
 - Syscall, filesystem, network, and device input paths need more systematic
   negative testing and fuzzing.
@@ -180,8 +211,8 @@ Do not treat passing tests or this feature list as a security guarantee.
 
 Near-term development priorities:
 
-1. Complete address-space and task teardown, transactional `exec` and COW
-   failure handling, and safe ASID reuse.
+1. Define orphan adoption semantics, then expand teardown and COW
+   allocation-failure tests.
 2. Audit syscall boundaries, authorization checks, and partial-I/O behavior.
 3. Add malformed-input, allocation-failure, and fuzz tests for BKFS, networking,
    and device interfaces.

@@ -8,6 +8,7 @@
 #include "initrd.h"
 #include "ksh.h"
 #include "bkfs.h"
+#include "cred.h"
 #include "wallpaper.h"
 #include "media.h"
 #include "clipboard.h"
@@ -215,7 +216,7 @@ static void tab_complete(win_t *w) {
     const char *prefix = w->input + sp + 1;
     int plen = str_len(prefix);
     char fname[64]; uint32_t fsize;
-    for (int i = 0; bkfs_list(i, fname, sizeof(fname), &fsize); i++) {
+    for (int i = 0; bkfs_list_for(i, fname, sizeof(fname), &fsize, cred_ui()); i++) {
         int k = 0;
         while (fname[k] && prefix[k] && fname[k] == prefix[k]) k++;
         if (k == plen) {
@@ -246,7 +247,7 @@ static void print_initrd_file(win_t *w, const char *name) {
 }
 static void print_bkfs_file(win_t *w, const char *name) {
     static uint8_t buf[8192];
-    int n = bkfs_read(name, buf, sizeof(buf));
+    int n = bkfs_read_for(name, buf, sizeof(buf), cred_ui());
     if (n == BKFS_ENOENT) { win_puts(w, "no such file"); return; }
     if (n < 0) { win_puts(w, "read error"); return; }
     char line[WIN_LINE_MAX]; int li = 0;
@@ -276,7 +277,7 @@ static const char *get_cmd_history(win_t *w, int back) {
 static void print_bkfs_list(win_t *w) {
     char fname[64]; uint32_t fsize;
     int n = 0;
-    for (int i = 0; bkfs_list(i, fname, sizeof(fname), &fsize); i++) {
+    for (int i = 0; bkfs_list_for(i, fname, sizeof(fname), &fsize, cred_ui()); i++) {
         char buf[WIN_LINE_MAX]; int bi = 0;
         for (int j = 0; fname[j] && bi < WIN_LINE_MAX - 20; j++) buf[bi++] = fname[j];
         while (bi < 20) buf[bi++] = ' ';
@@ -538,8 +539,8 @@ static void exec_cmd(win_t *w, const char *cmd) {
         return;
     }
     if (str_eq(cmd, "mkfs")) {
-        int r = bkfs_format();
-        win_puts(w, r == BKFS_OK ? "formatted" : "format failed");
+        int r = bkfs_format_for(cred_ui());
+        win_puts(w, r == BKFS_OK ? "formatted" : "permission denied");
         return;
     }
     if (str_eq(cmd, "lsw")) {
@@ -549,7 +550,7 @@ static void exec_cmd(win_t *w, const char *cmd) {
     if (str_eq(cmd, "touch")) { win_puts(w, "usage: touch <name>"); return; }
     if (str_eq_prefix(cmd, "touch ")) {
         if (!bkfs_is_ready()) { win_puts(w, "no filesystem"); return; }
-        int r = bkfs_create(cmd + 6);
+        int r = bkfs_create_for(cmd + 6, cred_ui(), BKFS_DEFAULT_MODE);
         if (r == BKFS_OK) win_puts(w, "created");
         else if (r == BKFS_EEXIST) win_puts(w, "already exists");
         else win_puts(w, "error");
@@ -567,17 +568,17 @@ static void exec_cmd(win_t *w, const char *cmd) {
         name[sp] = 0;
         const char *text = arg + sp + 1;
         uint32_t tlen = (uint32_t)str_len(text);
-        int r = bkfs_create(name);
+        int r = bkfs_create_for(name, cred_ui(), BKFS_DEFAULT_MODE);
         if (r == BKFS_EEXIST) r = BKFS_OK;
         if (r != BKFS_OK) { win_puts(w, "create failed"); return; }
-        int w_len = bkfs_write(name, text, tlen);
+        int w_len = bkfs_write_for(name, text, tlen, cred_ui());
         if (w_len < 0) { win_puts(w, "write failed"); return; }
         win_puts(w, "written"); return;
     }
     if (str_eq(cmd, "rm")) { win_puts(w, "usage: rm <name>"); return; }
     if (str_eq_prefix(cmd, "rm ")) {
         if (!bkfs_is_ready()) { win_puts(w, "no filesystem"); return; }
-        int r = bkfs_delete(cmd + 3);
+        int r = bkfs_delete_for(cmd + 3, cred_ui());
         if (r == BKFS_OK) win_puts(w, "removed");
         else if (r == BKFS_ENOENT) win_puts(w, "no such file");
         else win_puts(w, "error");
@@ -623,9 +624,17 @@ static void exec_cmd(win_t *w, const char *cmd) {
     if (str_eq_prefix(cmd, "cat ")) {
         const char *name = cmd + 4;
         if (bkfs_is_ready()) {
-            static uint8_t tmpbuf[8];
-            int r = bkfs_read(name, tmpbuf, 0);
-            if (r != BKFS_ENOENT) { print_bkfs_file(w, name); return; }
+            int inode = bkfs_open(name);
+            if (inode >= 0) {
+                uint32_t uid, gid, mode;
+                if (bkfs_get_metadata(inode, &uid, &gid, &mode) != BKFS_OK ||
+                    !cred_may_access(cred_ui(), mode, uid, gid, CRED_R)) {
+                    win_puts(w, "permission denied");
+                } else {
+                    print_bkfs_file(w, name);
+                }
+                return;
+            }
         }
         print_initrd_file(w, name); return;
     }

@@ -8,6 +8,8 @@
 #include "mmu.h"
 #include "elf.h"
 #include "pipe.h"
+#include "socket.h"
+#include "tcp.h"
 
 #define FRAME_SIZE 0x120
 
@@ -58,6 +60,7 @@ static task_t *alloc_task(const char *name,
     t->state      = TASK_READY;
     t->next       = 0;
     t->to_window  = 0;
+    t->kstack_base = (uint64_t)kstack_kva;
     t->ttbr0_pa   = 0;
     t->asid       = 0;
     t->heap_end   = 0;
@@ -74,6 +77,49 @@ static task_t *alloc_task(const char *name,
     *kstack_out   = kstack_kva;
     *frame_sp_out = frame_sp;
     return t;
+}
+
+void task_fd_retain(task_fd_t *fd) {
+    if (!fd || !fd->used) return;
+    if (fd->src == TFD_PIPE_READ) pipe_ref_read(fd->pipe_idx);
+    if (fd->src == TFD_PIPE_WRITE) pipe_ref_write(fd->pipe_idx);
+    if (fd->src == TFD_SOCKET) sock_ref(fd->sock_idx);
+    if (fd->src == TFD_TCP) tcp_ref(fd->tcp_idx);
+}
+
+void task_fd_release(task_fd_t *fd) {
+    if (!fd || !fd->used) return;
+    if (fd->src == TFD_PIPE_READ) pipe_close_read(fd->pipe_idx);
+    if (fd->src == TFD_PIPE_WRITE) pipe_close_write(fd->pipe_idx);
+    if (fd->src == TFD_SOCKET) sock_free(fd->sock_idx);
+    if (fd->src == TFD_TCP) tcp_free(fd->tcp_idx);
+    fd->used       = 0;
+    fd->src        = TFD_UNUSED;
+    fd->flags      = 0;
+    fd->offset     = 0;
+    fd->file       = 0;
+    fd->bkfs_inode = -1;
+    fd->pipe_idx   = -1;
+    fd->sock_idx   = -1;
+    fd->tcp_idx    = -1;
+}
+
+void task_destroy(task_t *t) {
+    if (!t) return;
+
+    for (int i = 0; i < TASK_MAX_FDS; i++) task_fd_release(&t->fds[i]);
+    if (t->ttbr0_pa) {
+        mmu_destroy_user_as(t->ttbr0_pa, t->asid);
+        mmu_release_asid(t->asid);
+    }
+    cred_free(t->cred);
+    if (t->kstack_base) {
+        uint64_t kpages = (TASK_STACK_SIZE + PAGE_SIZE - 1) / PAGE_SIZE;
+        for (uint64_t i = 0; i < kpages; i++) {
+            phys_free_page((void *)(t->kstack_base + i * PAGE_SIZE));
+        }
+    }
+    kfree(t);
 }
 
 task_t *task_create(const char *name, void (*fn)(void)) {
@@ -97,10 +143,14 @@ task_t *task_create_user(const char *name, const void *code, unsigned long code_
     if (!t) return 0;
 
     uint8_t *code_page_kva = (uint8_t *)phys_alloc_page();
-    if (!code_page_kva) { cred_free(t->cred); kfree(t); return 0; }
+    if (!code_page_kva) { task_destroy(t); return 0; }
 
     uint8_t *ustack_kva = (uint8_t *)phys_alloc_page();
-    if (!ustack_kva) { cred_free(t->cred); kfree(t); return 0; }
+    if (!ustack_kva) {
+        phys_free_page(code_page_kva);
+        task_destroy(t);
+        return 0;
+    }
 
     uint64_t code_pa   = KVA_TO_PA(code_page_kva);
     uint64_t ustack_pa = KVA_TO_PA(ustack_kva);
@@ -111,16 +161,37 @@ task_t *task_create_user(const char *name, const void *code, unsigned long code_
     }
 
     uint64_t l0_pa = mmu_create_user_as();
-    if (!l0_pa) { cred_free(t->cred); kfree(t); return 0; }
+    if (!l0_pa) {
+        phys_free_page(code_page_kva);
+        phys_free_page(ustack_kva);
+        task_destroy(t);
+        return 0;
+    }
+    t->ttbr0_pa = l0_pa;
 
     uint16_t asid = mmu_alloc_asid();
-    if (asid == 0) { cred_free(t->cred); kfree(t); return 0; }
+    if (asid == 0) {
+        phys_free_page(code_page_kva);
+        phys_free_page(ustack_kva);
+        task_destroy(t);
+        return 0;
+    }
+    t->asid = asid;
 
-    mmu_map_user_page(l0_pa, USER_CODE_BASE, code_pa, /*is_code=*/1, asid);
-    mmu_map_user_page(l0_pa, USER_STACK_TOP - PAGE_SIZE, ustack_pa, /*is_code=*/0, asid);
+    if (!mmu_map_user_page_prot(l0_pa, USER_CODE_BASE, code_pa,
+                                VM_READ | VM_EXEC, asid)) {
+        phys_free_page(code_page_kva);
+        phys_free_page(ustack_kva);
+        task_destroy(t);
+        return 0;
+    }
+    if (!mmu_map_user_page_prot(l0_pa, USER_STACK_TOP - PAGE_SIZE, ustack_pa,
+                                VM_READ | VM_WRITE, asid)) {
+        phys_free_page(ustack_kva);
+        task_destroy(t);
+        return 0;
+    }
 
-    t->ttbr0_pa = l0_pa;
-    t->asid     = asid;
     t->heap_end = USER_HEAP_BASE;
 
     uint64_t *f = (uint64_t *)frame_sp;
@@ -219,8 +290,11 @@ int task_setup_user_stack(uint64_t l0_pa, uint16_t asid,
         if (!pg) return 0;
         for (int j = 0; j < (int)PAGE_SIZE; j++) pg[j] = 0;
         stack_pas[p] = KVA_TO_PA(pg);
-        mmu_map_user_page(l0_pa, stack_base + p * PAGE_SIZE,
-                          stack_pas[p], 0, asid);
+        if (!mmu_map_user_page_prot(l0_pa, stack_base + p * PAGE_SIZE,
+                                    stack_pas[p], VM_READ | VM_WRITE, asid)) {
+            phys_free_page(pg);
+            return 0;
+        }
     }
 
     if (argc < 0) argc = 0;
@@ -270,25 +344,25 @@ static task_t *create_from_elf_common(const char *name,
     if (!t) return 0;
 
     uint64_t l0_pa = mmu_create_user_as();
-    if (!l0_pa) { kfree(t); return 0; }
+    if (!l0_pa) { task_destroy(t); return 0; }
+    t->ttbr0_pa = l0_pa;
 
     uint16_t asid = mmu_alloc_asid();
-    if (asid == 0) { kfree(t); return 0; }
+    if (asid == 0) { task_destroy(t); return 0; }
+    t->asid = asid;
 
     elf_info_t info;
     if (!task_load_elf_into(l0_pa, asid, elf, elf_size, &info)) {
-        kfree(t);
+        task_destroy(t);
         return 0;
     }
 
     uint64_t sp, argv_user;
     if (!task_setup_user_stack(l0_pa, asid, argc, argv, &sp, &argv_user)) {
-        kfree(t);
+        task_destroy(t);
         return 0;
     }
 
-    t->ttbr0_pa = l0_pa;
-    t->asid     = asid;
     t->heap_end = USER_HEAP_BASE;
 
     uint64_t *f = (uint64_t *)frame_sp;
@@ -320,9 +394,11 @@ task_t *task_fork_clone(task_t *parent, uint64_t new_l0, uint16_t new_asid,
     task_t *child = (task_t *)kmalloc(sizeof(task_t));
     if (!child) return 0;
 
+    for (uint64_t i = 0; i < sizeof(task_t); i++) ((uint8_t *)child)[i] = 0;
     uint64_t kpages = (TASK_STACK_SIZE + PAGE_SIZE - 1) / PAGE_SIZE;
     uint8_t *kstack = (uint8_t *)phys_alloc_pages(kpages);
     if (!kstack) { kfree(child); return 0; }
+    child->kstack_base = (uint64_t)kstack;
 
     // Копируем всё, включая fds.
     // (struct task_t имеет тривиальные поля, memcpy корректен.)
@@ -332,8 +408,14 @@ task_t *task_fork_clone(task_t *parent, uint64_t new_l0, uint16_t new_asid,
         for (uint64_t i = 0; i < sizeof(task_t); i++) d[i] = s[i];
     }
 
+    child->kstack_base = (uint64_t)kstack;
     child->cred = cred_copy(parent->cred);
-    if (!child->cred) { kfree(child); return 0; }
+    if (!child->cred) {
+        for (uint64_t i = 0; i < kpages; i++)
+            phys_free_page(kstack + i * PAGE_SIZE);
+        kfree(child);
+        return 0;
+    }
 
     child->id         = g_next_id++;
     child->state      = TASK_READY;
@@ -352,12 +434,9 @@ task_t *task_fork_clone(task_t *parent, uint64_t new_l0, uint16_t new_asid,
     child->name[nl++] = 'c';
     child->name[nl]   = 0;
 
-    // Обход fds: для pipe'ов увеличить refcount обеих сторон.
+    // The child owns one reference to each inherited descriptor resource.
     for (int i = 0; i < TASK_MAX_FDS; i++) {
-        task_fd_t *fd = &child->fds[i];
-        if (!fd->used) continue;
-        if (fd->src == TFD_PIPE_READ)  pipe_ref_read(fd->pipe_idx);
-        if (fd->src == TFD_PIPE_WRITE) pipe_ref_write(fd->pipe_idx);
+        task_fd_retain(&child->fds[i]);
     }
 
     // Kernel-стек: копия frame'а.

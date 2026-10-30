@@ -1,30 +1,33 @@
 // BrainixKernel — bkfs.c
-// Реализация BKFS v2: 13 прямых + 1 косвенный блок = до 72 KB на файл.
+// Реализация BKFS v3: 13 прямых + 1 косвенный блок = до 72 KB на файл.
 // Bitmap свободных блоков в памяти (пересобирается при init).
 // Без libc.
 
 #include <stdint.h>
 #include "bkfs.h"
 #include "blk.h"
+#include "cred.h"
 
 extern void uart_puts(const char *s);
 extern void uart_putu(uint64_t v);
 
 #define BKFS_MAGIC        0x53464B42u  // 'BKFS'
-#define BKFS_VERSION      2u
+#define BKFS_VERSION_LEGACY 2u
+#define BKFS_VERSION      3u
+#define BKFS_MIGRATING_VERSION 0x80000003u
+#define BKFS_METADATA_MAGIC 0xB35Au
 #define BKFS_BLOCK_SIZE   512u
 #define BKFS_INODE_COUNT  256u
 #define BKFS_INODE_START  1u
 #define BKFS_INODE_SECTORS ((BKFS_INODE_COUNT * 128u) / BKFS_BLOCK_SIZE)  // 64
 #define BKFS_DATA_START   (BKFS_INODE_START + BKFS_INODE_SECTORS)         // 65
 
-// Раскладка блочных указателей в inode:
+// Раскладка inode и блочных указателей:
 //   blocks[0..12]  — 13 прямых блоков (6.5 KB)
 //   blocks[13]     — косвенный блок (128 указателей = 64 KB)
-//   blocks[14]     — зарезервировано
+//   UID/GID/mode   — метаданные доступа в бывших reserved bytes
 #define BKFS_DIRECT_COUNT       13
 #define BKFS_INDIRECT_INDEX     13
-#define BKFS_RESERVED_INDEX     14
 #define BKFS_INDIRECT_PTRS      (BKFS_BLOCK_SIZE / 4)  // 128
 #define BKFS_MAX_BLOCKS         (BKFS_DIRECT_COUNT + BKFS_INDIRECT_PTRS)  // 141
 
@@ -45,9 +48,20 @@ typedef struct __attribute__((packed)) {
     uint8_t  type;
     char     name[59];
     uint32_t size;
+    uint32_t blocks[14];
+    uint16_t uid;
+    uint16_t gid;
+    uint16_t mode;
+    uint16_t metadata_magic;
+} bkfs_inode_t;
+
+typedef struct __attribute__((packed)) {
+    uint8_t  type;
+    char     name[59];
+    uint32_t size;
     uint32_t blocks[15];
     uint8_t  pad[4];
-} bkfs_inode_t;
+} bkfs_inode_v2_t;
 
 static uint8_t g_sec[512];
 static bkfs_super_t g_super;
@@ -57,6 +71,9 @@ static uint32_t g_inode_cache_sector = 0xFFFFFFFFu;
 // Bitmap свободных/занятых блоков (1 = занят).
 static uint8_t  g_block_bitmap[MAX_DISK_SECTORS / 8];
 static uint32_t g_total_blocks = 0;
+
+_Static_assert(sizeof(bkfs_inode_t) == 128, "BKFS v3 inode size");
+_Static_assert(sizeof(bkfs_inode_v2_t) == 128, "BKFS v2 inode size");
 
 // ---------- Утилиты ----------
 static int str_eq(const char *a, const char *b) {
@@ -76,6 +93,12 @@ static void bytes_copy(void *dst, const void *src, uint32_t n) {
 static void bytes_zero(void *dst, uint32_t n) {
     uint8_t *d = (uint8_t *)dst;
     for (uint32_t i = 0; i < n; i++) d[i] = 0;
+}
+static int sector_is_zero(const uint8_t *sector) {
+    for (uint32_t i = 0; i < BKFS_BLOCK_SIZE; i++) {
+        if (sector[i] != 0) return 0;
+    }
+    return 1;
 }
 
 // Побайтовая работа с 32-битными указателями в блоке (без выравнивания).
@@ -242,8 +265,50 @@ static void free_all_blocks(bkfs_inode_t *in) {
         free_block(ind);
         in->blocks[BKFS_INDIRECT_INDEX] = 0;
     }
-    in->blocks[BKFS_RESERVED_INDEX] = 0;
     in->size = 0;
+}
+
+static int migrate_v2(void) {
+    uint8_t sector[512];
+    for (uint32_t s = 0; s < BKFS_INODE_SECTORS; s++) {
+        if (!blk_read_sector(BKFS_INODE_START + s, sector)) return 0;
+        bkfs_inode_v2_t *legacy = (bkfs_inode_v2_t *)sector;
+        bkfs_inode_t *current = (bkfs_inode_t *)sector;
+        for (uint32_t i = 0; i < 4; i++) {
+            if (current[i].type == 0 ||
+                current[i].metadata_magic == BKFS_METADATA_MAGIC) {
+                continue;
+            }
+            if (legacy[i].blocks[14] != 0 ||
+                legacy[i].pad[0] != 0 || legacy[i].pad[1] != 0 ||
+                legacy[i].pad[2] != 0 || legacy[i].pad[3] != 0) {
+                return 0;
+            }
+            current[i].uid = ROOT_UID;
+            current[i].gid = ROOT_GID;
+            current[i].mode = BKFS_DEFAULT_MODE;
+            current[i].metadata_magic = BKFS_METADATA_MAGIC;
+        }
+        if (!blk_write_sector(BKFS_INODE_START + s, sector)) return 0;
+    }
+
+    if (!blk_read_sector(0, g_sec)) return -1;
+    ((bkfs_super_t *)g_sec)->version = BKFS_VERSION;
+    if (!blk_write_sector(0, g_sec)) return 0;
+    g_inode_cache_sector = 0xFFFFFFFFu;
+    return 1;
+}
+
+static int metadata_validate(void) {
+    for (uint32_t i = 0; i < BKFS_INODE_COUNT; i++) {
+        bkfs_inode_t in;
+        if (!inode_load(i, &in)) return 0;
+        if (in.type != 0 &&
+            (in.metadata_magic != BKFS_METADATA_MAGIC || in.mode > 07777u)) {
+            return 0;
+        }
+    }
+    return 1;
 }
 
 // ============================================================
@@ -254,17 +319,38 @@ int bkfs_init(void) {
     g_ready = 0;
     g_inode_cache_sector = 0xFFFFFFFFu;
 
-    if (!blk_read_sector(0, g_sec)) return 0;
+    if (!blk_read_sector(0, g_sec)) return -1;
 
     bkfs_super_t *sp = (bkfs_super_t *)g_sec;
-    if (sp->magic != BKFS_MAGIC) return 0;
-    if (sp->version != BKFS_VERSION) return 0;
-    if (sp->block_size != BKFS_BLOCK_SIZE) return 0;
+    if (sp->magic != BKFS_MAGIC) return sector_is_zero(g_sec) ? 0 : -1;
+    if (sp->block_size != BKFS_BLOCK_SIZE ||
+        sp->inode_count != BKFS_INODE_COUNT ||
+        sp->inode_start != BKFS_INODE_START ||
+        sp->data_start != BKFS_DATA_START ||
+        sp->total_blocks < BKFS_DATA_START ||
+        sp->total_blocks > blk_capacity()) {
+        return -1;
+    }
+
+    if (sp->version == BKFS_VERSION_LEGACY) {
+        sp->version = BKFS_MIGRATING_VERSION;
+        if (!blk_write_sector(0, g_sec) || !migrate_v2()) return -1;
+        if (!blk_read_sector(0, g_sec)) return -1;
+        sp = (bkfs_super_t *)g_sec;
+    } else if (sp->version == BKFS_MIGRATING_VERSION) {
+        if (!migrate_v2()) return -1;
+        if (!blk_read_sector(0, g_sec)) return -1;
+        sp = (bkfs_super_t *)g_sec;
+    } else if (sp->version != BKFS_VERSION) {
+        return -1;
+    }
 
     bytes_copy(&g_super, sp, sizeof(bkfs_super_t));
     g_total_blocks = sp->total_blocks;
     if (g_total_blocks > MAX_DISK_SECTORS) g_total_blocks = MAX_DISK_SECTORS;
 
+    g_inode_cache_sector = 0xFFFFFFFFu;
+    if (!metadata_validate()) return -1;
     g_ready = 1;
     bitmap_rebuild();
     return 1;
@@ -274,7 +360,7 @@ int bkfs_is_ready(void) { return g_ready; }
 
 int bkfs_format(void) {
     uint64_t total = blk_capacity();
-    if (total == 0) return BKFS_EIO;
+    if (total < BKFS_DATA_START) return BKFS_EIO;
     if (total > MAX_DISK_SECTORS) total = MAX_DISK_SECTORS;
 
     bytes_zero(g_sec, 512);
@@ -287,13 +373,12 @@ int bkfs_format(void) {
     sp->inode_start  = BKFS_INODE_START;
     sp->data_start   = BKFS_DATA_START;
 
-    if (!blk_write_sector(0, g_sec)) return BKFS_EIO;
-
     uint8_t zero[512];
     bytes_zero(zero, 512);
     for (uint32_t s = 0; s < BKFS_INODE_SECTORS; s++) {
         if (!blk_write_sector(BKFS_INODE_START + s, zero)) return BKFS_EIO;
     }
+    if (!blk_write_sector(0, g_sec)) return BKFS_EIO;
 
     bytes_copy(&g_super, sp, sizeof(bkfs_super_t));
     g_total_blocks = (uint32_t)total;
@@ -308,9 +393,21 @@ int bkfs_format(void) {
     return BKFS_OK;
 }
 
+int bkfs_format_for(const struct cred *cred) {
+    if (!cred || !cred_has_cap(cred, CAP_SYS_ADMIN)) return BKFS_EINVAL;
+    return bkfs_format();
+}
+
 int bkfs_create(const char *name) {
+    return bkfs_create_for(name, cred_ui(), BKFS_DEFAULT_MODE);
+}
+
+static int inode_create_as(const char *name, uint32_t uid, uint32_t gid,
+                           uint32_t mode) {
     if (!g_ready) return BKFS_EIO;
     if (!name || !name[0]) return BKFS_EIO;
+    if (uid > BKFS_MAX_ID || gid > BKFS_MAX_ID || mode > 07777u)
+        return BKFS_EINVAL;
 
     uint32_t existing;
     if (inode_find(name, &existing)) return BKFS_EEXIST;
@@ -323,9 +420,22 @@ int bkfs_create(const char *name) {
     in.type = 1;
     str_copy_n(in.name, name, 59);
     in.size = 0;
+    in.uid = (uint16_t)uid;
+    in.gid = (uint16_t)gid;
+    in.mode = (uint16_t)mode;
+    in.metadata_magic = BKFS_METADATA_MAGIC;
 
     if (!inode_store(idx, &in)) return BKFS_EIO;
     return BKFS_OK;
+}
+
+int bkfs_create_for(const char *name, const struct cred *cred, uint32_t mode) {
+    if (!cred) return BKFS_EINVAL;
+    if (mode > 07777u || cred->euid > BKFS_MAX_ID ||
+        cred->egid > BKFS_MAX_ID) {
+        return BKFS_EINVAL;
+    }
+    return inode_create_as(name, cred->euid, cred->egid, mode);
 }
 
 int bkfs_open(const char *name) {
@@ -335,6 +445,84 @@ int bkfs_open(const char *name) {
     uint32_t idx;
     if (!inode_find(name, &idx)) return BKFS_ENOENT;
     return (int)idx;
+}
+
+int bkfs_get_metadata(int inode, uint32_t *uid, uint32_t *gid,
+                      uint32_t *mode) {
+    if (!g_ready) return BKFS_EIO;
+    if (inode < 0 || inode >= (int)BKFS_INODE_COUNT) return BKFS_ENOENT;
+
+    bkfs_inode_t in;
+    if (!inode_load((uint32_t)inode, &in)) return BKFS_EIO;
+    if (in.type == 0) return BKFS_ENOENT;
+    if (in.metadata_magic != BKFS_METADATA_MAGIC || in.mode > 07777u)
+        return BKFS_EIO;
+
+    if (uid) *uid = in.uid;
+    if (gid) *gid = in.gid;
+    if (mode) *mode = in.mode;
+    return BKFS_OK;
+}
+
+static int inode_access_for(const struct cred *cred, int inode, int want,
+                            uint32_t *uid_out, uint32_t *gid_out,
+                            uint32_t *mode_out) {
+    uint32_t uid, gid, mode;
+    if (!cred || bkfs_get_metadata(inode, &uid, &gid, &mode) != BKFS_OK)
+        return 0;
+    if (uid_out) *uid_out = uid;
+    if (gid_out) *gid_out = gid;
+    if (mode_out) *mode_out = mode;
+    return cred_may_access(cred, mode, uid, gid, want);
+}
+
+int bkfs_chmod_for(const char *name, uint32_t mode, const struct cred *cred) {
+    if (!cred || mode > 07777u) return BKFS_EINVAL;
+    int inode = bkfs_open(name);
+    if (inode < 0) return inode;
+    uint32_t uid, gid, old_mode;
+    if (bkfs_get_metadata(inode, &uid, &gid, &old_mode) != BKFS_OK)
+        return BKFS_EIO;
+    if (cred->euid != uid && !cred_has_cap(cred, CAP_FOWNER))
+        return BKFS_EINVAL;
+    if (!cred_has_cap(cred, CAP_FSETID) && !cred_is_group_member(cred, gid))
+        mode &= ~02000u;
+
+    bkfs_inode_t in;
+    if (!inode_load((uint32_t)inode, &in)) return BKFS_EIO;
+    in.mode = (uint16_t)mode;
+    return inode_store((uint32_t)inode, &in) ? BKFS_OK : BKFS_EIO;
+}
+
+int bkfs_chown_for(const char *name, uint32_t uid, uint32_t gid,
+                   const struct cred *cred) {
+    if (!cred || (uid != UINT32_MAX && uid > BKFS_MAX_ID) ||
+        (gid != UINT32_MAX && gid > BKFS_MAX_ID)) {
+        return BKFS_EINVAL;
+    }
+    int inode = bkfs_open(name);
+    if (inode < 0) return inode;
+    uint32_t old_uid, old_gid, mode;
+    if (bkfs_get_metadata(inode, &old_uid, &old_gid, &mode) != BKFS_OK)
+        return BKFS_EIO;
+
+    int privileged = cred_has_cap(cred, CAP_CHOWN);
+    if (!privileged) {
+        if (cred->euid != old_uid ||
+            (uid != UINT32_MAX && uid != old_uid) ||
+            (gid != UINT32_MAX &&
+             !cred_is_group_member(cred, (gid_t)gid))) {
+            return BKFS_EINVAL;
+        }
+    }
+
+    bkfs_inode_t in;
+    if (!inode_load((uint32_t)inode, &in)) return BKFS_EIO;
+    if (uid != UINT32_MAX) in.uid = (uint16_t)uid;
+    if (gid != UINT32_MAX) in.gid = (uint16_t)gid;
+    if (uid != UINT32_MAX || gid != UINT32_MAX)
+        in.mode &= (uint16_t)~06000u;
+    return inode_store((uint32_t)inode, &in) ? BKFS_OK : BKFS_EIO;
 }
 
 int bkfs_size(int inode) {
@@ -358,6 +546,16 @@ int bkfs_truncate(int inode) {
     free_all_blocks(&in);
     if (!inode_store((uint32_t)inode, &in)) return BKFS_EIO;
     return BKFS_OK;
+}
+
+int bkfs_truncate_for(int inode, const struct cred *cred) {
+    if (!inode_access_for(cred, inode, CRED_W, 0, 0, 0)) return BKFS_EINVAL;
+    bkfs_inode_t in;
+    if (!inode_load((uint32_t)inode, &in)) return BKFS_EIO;
+    if (in.type == 0) return BKFS_ENOENT;
+    if (!cred_has_cap(cred, CAP_FSETID)) in.mode &= (uint16_t)~06000u;
+    free_all_blocks(&in);
+    return inode_store((uint32_t)inode, &in) ? BKFS_OK : BKFS_EIO;
 }
 
 int bkfs_read_at(int inode, uint32_t offset, void *buf, uint32_t len) {
@@ -455,22 +653,26 @@ int bkfs_write_at(int inode, uint32_t offset, const void *buf, uint32_t len) {
     return (int)written;
 }
 
+int bkfs_write_at_for(int inode, uint32_t offset, const void *buf,
+                      uint32_t len, const struct cred *cred) {
+    if (!inode_access_for(cred, inode, CRED_W, 0, 0, 0)) return BKFS_EINVAL;
+    if (len == 0) return 0;
+    if (!buf) return BKFS_EINVAL;
+    if (!cred_has_cap(cred, CAP_FSETID)) {
+        bkfs_inode_t in;
+        if (!inode_load((uint32_t)inode, &in)) return BKFS_EIO;
+        if (in.type == 0) return BKFS_ENOENT;
+        if (in.mode & 06000u) {
+            in.mode &= (uint16_t)~06000u;
+            if (!inode_store((uint32_t)inode, &in)) return BKFS_EIO;
+        }
+    }
+    return bkfs_write_at(inode, offset, buf, len);
+}
+
 // ---------- High-level API ----------
 
-int bkfs_write(const char *name, const void *data, uint32_t len) {
-    int inode = bkfs_open(name);
-    if (inode < 0) return BKFS_ENOENT;
-    if (bkfs_truncate(inode) != BKFS_OK) return BKFS_EIO;
-    return bkfs_write_at(inode, 0, data, len);
-}
-
-int bkfs_read(const char *name, void *buf, uint32_t max) {
-    int inode = bkfs_open(name);
-    if (inode < 0) return BKFS_ENOENT;
-    return bkfs_read_at(inode, 0, buf, max);
-}
-
-int bkfs_delete(const char *name) {
+static int inode_delete(const char *name) {
     if (!g_ready) return BKFS_EIO;
 
     uint32_t idx;
@@ -486,20 +688,63 @@ int bkfs_delete(const char *name) {
     return BKFS_OK;
 }
 
-int bkfs_list(int idx, char *name_out, uint32_t name_max, uint32_t *size_out) {
-    if (!g_ready) return 0;
+int bkfs_write(const char *name, const void *data, uint32_t len) {
+    return bkfs_write_for(name, data, len, cred_ui());
+}
 
-    int seen = 0;
+int bkfs_read(const char *name, void *buf, uint32_t max) {
+    return bkfs_read_for(name, buf, max, cred_ui());
+}
+
+int bkfs_delete(const char *name) {
+    return bkfs_delete_for(name, cred_ui());
+}
+
+int bkfs_read_for(const char *name, void *buf, uint32_t max,
+                  const struct cred *cred) {
+    int inode = bkfs_open(name);
+    if (inode < 0) return inode;
+    if (!inode_access_for(cred, inode, CRED_R, 0, 0, 0)) return BKFS_EINVAL;
+    return bkfs_read_at(inode, 0, buf, max);
+}
+
+int bkfs_write_for(const char *name, const void *data, uint32_t len,
+                   const struct cred *cred) {
+    int inode = bkfs_open(name);
+    if (inode < 0) return inode;
+    if (!inode_access_for(cred, inode, CRED_W, 0, 0, 0)) return BKFS_EINVAL;
+    if (bkfs_truncate_for(inode, cred) != BKFS_OK) return BKFS_EIO;
+    return bkfs_write_at_for(inode, 0, data, len, cred);
+}
+
+int bkfs_delete_for(const char *name, const struct cred *cred) {
+    if (!cred) return BKFS_EINVAL;
+    int inode = bkfs_open(name);
+    if (inode < 0) return inode;
+    uint32_t uid;
+    if (bkfs_get_metadata(inode, &uid, 0, 0) != BKFS_OK) return BKFS_EIO;
+    if (cred->euid != uid && !cred_has_cap(cred, CAP_FOWNER))
+        return BKFS_EINVAL;
+    return inode_delete(name);
+}
+
+int bkfs_list(int idx, char *name_out, uint32_t name_max, uint32_t *size_out) {
+    return bkfs_list_for(idx, name_out, name_max, size_out, cred_ui());
+}
+
+int bkfs_list_for(int idx, char *name_out, uint32_t name_max,
+                  uint32_t *size_out, const struct cred *cred) {
+    if (!g_ready || idx < 0 || !name_out || name_max == 0 || !cred) return 0;
+    int visible = 0;
     for (uint32_t i = 0; i < BKFS_INODE_COUNT; i++) {
         if (!inode_load_sector(i)) return 0;
         bkfs_inode_t *p = inode_ptr(i);
         if (p->type == 0) continue;
-        if (seen == idx) {
-            str_copy_n(name_out, p->name, (int)name_max);
-            if (size_out) *size_out = p->size;
-            return 1;
-        }
-        seen++;
+        if (!cred_may_access(cred, p->mode, p->uid, p->gid, CRED_R)) continue;
+        if (visible++ != idx) continue;
+        str_copy_n(name_out, p->name, (int)name_max);
+        if (size_out) *size_out = p->size;
+        return 1;
     }
     return 0;
 }

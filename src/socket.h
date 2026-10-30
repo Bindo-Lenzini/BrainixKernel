@@ -20,6 +20,7 @@ typedef struct {
 
 typedef struct {
     int      used;
+    uint16_t refs;
     uint16_t local_port;    // network byte order
 
     sock_pkt_t rx[SOCK_RX_QUEUE];
@@ -28,6 +29,7 @@ typedef struct {
 } socket_t;
 
 int  sock_alloc(uint16_t local_port_be);
+void sock_ref(int idx);
 void sock_free(int idx);
 socket_t *sock_get(int idx);
 socket_t *sock_find_by_port(uint16_t port_be);

@@ -206,8 +206,14 @@ $(BUILD_DIR)/elf_test: tests/elf_test.c $(SRC_DIR)/elf.c $(SRC_DIR)/elf.h | $(BU
 	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -I$(SRC_DIR) \
 	    tests/elf_test.c $(SRC_DIR)/elf.c -o $@
 
-host-test: $(BUILD_DIR)/elf_test
+$(BUILD_DIR)/bkfs_test: tests/bkfs_test.c $(SRC_DIR)/bkfs.c $(SRC_DIR)/cred.c \
+                        $(SRC_DIR)/bkfs.h $(SRC_DIR)/blk.h $(SRC_DIR)/cred.h | $(BUILD_DIR)
+	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -I$(SRC_DIR) \
+	    tests/bkfs_test.c $(SRC_DIR)/bkfs.c $(SRC_DIR)/cred.c -o $@
+
+host-test: $(BUILD_DIR)/elf_test $(BUILD_DIR)/bkfs_test
 	$(BUILD_DIR)/elf_test
+	$(BUILD_DIR)/bkfs_test
 
 clean:
 	rm -rf $(BUILD_DIR)

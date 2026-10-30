@@ -26,6 +26,10 @@
 #define SYS_GETEUID  24
 #define SYS_GETGID   25
 #define SYS_GETEGID  26
+#define SYS_GETGROUPS 27
+#define SYS_SETGROUPS 28
+#define SYS_CHMOD     29
+#define SYS_CHOWN     30
 
 #define STDIN_FILENO  0
 #define STDOUT_FILENO 1
@@ -45,6 +49,10 @@ long read (int fd, void *buf, unsigned long n);
 void exit  (int code);
 int  open  (const char *name, int flags);
 int  close (int fd);
+int  chmod (const char *path, unsigned int mode);
+int  chown (const char *path, int uid, int gid);
+int  getgroups(int size, unsigned int groups[]);
+int  setgroups(int count, const unsigned int groups[]);
 void yield (void);
 void *brk  (void *new_end);
 int  exec  (const char *path, char *const argv[]);

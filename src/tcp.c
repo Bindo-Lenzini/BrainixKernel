@@ -20,6 +20,7 @@ int tcp_alloc(void) {
             tcp_conn_t *c = &g_conns[i];
             for (uint32_t k = 0; k < sizeof(tcp_conn_t); k++) ((uint8_t *)c)[k] = 0;
             c->used = 1;
+            c->refs = 1;
             c->state = TCP_CLOSED;
             return i;
         }
@@ -27,9 +28,19 @@ int tcp_alloc(void) {
     return -1;
 }
 
+void tcp_ref(int idx) {
+    if (idx < 0 || idx >= TCP_MAX || !g_conns[idx].used) return;
+    if (g_conns[idx].refs != UINT16_MAX) g_conns[idx].refs++;
+}
+
 void tcp_free(int idx) {
     if (idx < 0 || idx >= TCP_MAX) return;
-    g_conns[idx].used = 0;
+    tcp_conn_t *c = &g_conns[idx];
+    if (!c->used || c->refs == 0) return;
+    if (--c->refs == 0) {
+        tcp_close(c);
+        c->used = 0;
+    }
 }
 
 tcp_conn_t *tcp_get(int idx) {

@@ -19,6 +19,7 @@
 #include "socket.h"
 #include "net.h"
 #include "tcp.h"
+#include "heap.h"
 
 extern void uart_putc(char c);
 extern void uart_puts(const char *s);
@@ -57,6 +58,19 @@ static void fd_clear_slot(task_fd_t *f) {
     f->tcp_idx    = -1;
 }
 
+static int fd_access_mode(const task_fd_t *f) {
+    return f->flags & (BKFS_O_WRONLY | BKFS_O_RDWR);
+}
+
+static int bkfs_access_allowed(task_t *task, int inode, int want) {
+    uint32_t uid, gid, mode;
+    if (!task || !task->cred ||
+        bkfs_get_metadata(inode, &uid, &gid, &mode) != BKFS_OK) {
+        return 0;
+    }
+    return cred_may_access(task->cred, mode, uid, gid, want);
+}
+
 // ------------------------------------------------------------------
 // write
 // ------------------------------------------------------------------
@@ -84,10 +98,16 @@ static uint64_t sys_write(int fd, const void *user_buf, size_t len) {
 
     // BKFS-файл (offset всегда 0, перезапись целиком).
     if (f->src == TFD_BKFS) {
+        task_t *cur = sched_current();
+        if (fd_access_mode(f) == BKFS_O_RDONLY ||
+            !bkfs_access_allowed(cur, f->bkfs_inode, CRED_W)) {
+            return (uint64_t)-1;
+        }
         if (len > KIO_BUF) len = KIO_BUF;
         uint8_t kbuf[KIO_BUF];
         if (copy_from_user(kbuf, user_buf, len) < 0) return (uint64_t)-1;
-        int w = bkfs_write_at(f->bkfs_inode, 0, kbuf, (uint32_t)len);
+        int w = bkfs_write_at_for(f->bkfs_inode, 0, kbuf, (uint32_t)len,
+                                  cur->cred);
         if (w < 0) return (uint64_t)-1;
         f->offset = (uint32_t)w;
         return (uint64_t)w;
@@ -141,6 +161,7 @@ static uint64_t sys_read(int fd, void *user_buf, size_t len) {
     if (!f) return (uint64_t)-1;
 
     if (f->src == TFD_INITRD) {
+        if (fd_access_mode(f) == BKFS_O_WRONLY) return (uint64_t)-1;
         const initrd_file_t *file = (const initrd_file_t *)f->file;
         if (len > KIO_BUF) len = KIO_BUF;
         uint8_t kbuf[KIO_BUF];
@@ -154,6 +175,11 @@ static uint64_t sys_read(int fd, void *user_buf, size_t len) {
     }
 
     if (f->src == TFD_BKFS) {
+        task_t *cur = sched_current();
+        if (fd_access_mode(f) == BKFS_O_WRONLY ||
+            !bkfs_access_allowed(cur, f->bkfs_inode, CRED_R)) {
+            return (uint64_t)-1;
+        }
         if (len > KIO_BUF) len = KIO_BUF;
         uint8_t kbuf[KIO_BUF];
         int r = bkfs_read_at(f->bkfs_inode, f->offset, kbuf, (uint32_t)len);
@@ -191,6 +217,15 @@ static int fd_alloc_slot(void) {
 static uint64_t sys_open(const char *user_name, int flags) {
     if (!user_name) return (uint64_t)-1;
 
+    const int allowed_flags = BKFS_O_WRONLY | BKFS_O_RDWR |
+                              BKFS_O_CREAT | BKFS_O_TRUNC;
+    int access_mode = flags & (BKFS_O_WRONLY | BKFS_O_RDWR);
+    if ((flags & ~allowed_flags) != 0 ||
+        access_mode == (BKFS_O_WRONLY | BKFS_O_RDWR) ||
+        ((flags & BKFS_O_TRUNC) && access_mode == BKFS_O_RDONLY)) {
+        return (uint64_t)-1;
+    }
+
     char kname[128];
     int n = 0;
     for (; n < (int)sizeof(kname) - 1; n++) {
@@ -204,30 +239,29 @@ static uint64_t sys_open(const char *user_name, int flags) {
 
     int create  = (flags & BKFS_O_CREAT) ? 1 : 0;
     int trunc   = (flags & BKFS_O_TRUNC) ? 1 : 0;
-    int writable = (flags & (BKFS_O_WRONLY | BKFS_O_RDWR)) ? 1 : 0;
+    int writable = access_mode != BKFS_O_RDONLY;
 
-    // --- Access control (temporary policy) ---
-    // bkfs does not expose per-inode uid/gid/mode yet, so the safest
-    // policy is: non-root may only open files read-only.
     task_t *cur = sched_current();
     if (!cur || !cur->cred) return (uint64_t)-1;
-    if (cur->cred->euid != 0 && (create || trunc || writable)) {
-        return (uint64_t)-1;
-    }
+
+    int fd = fd_alloc_slot();
+    if (fd < 0) return (uint64_t)-1;
 
     if (bkfs_is_ready()) {
         int inode = bkfs_open(kname);
-        if (inode < 0 && create && writable) {
-            int r = bkfs_create(kname);
+        if (inode < 0 && create) {
+            int r = bkfs_create_for(kname, cur->cred, BKFS_DEFAULT_MODE);
             if (r == BKFS_OK || r == BKFS_EEXIST) {
                 inode = bkfs_open(kname);
             }
         }
-
         if (inode >= 0) {
-            if (trunc && writable) bkfs_truncate(inode);
-            int fd = fd_alloc_slot();
-            if (fd < 0) return (uint64_t)-1;
+            int want = 0;
+            if (access_mode != BKFS_O_WRONLY) want |= CRED_R;
+            if (writable) want |= CRED_W;
+            if (!bkfs_access_allowed(cur, inode, want)) return (uint64_t)-1;
+            if (trunc && bkfs_truncate_for(inode, cur->cred) != BKFS_OK)
+                return (uint64_t)-1;
             task_fd_t *f = fd_slot(fd);
             f->used       = 1;
             f->src        = TFD_BKFS;
@@ -241,9 +275,7 @@ static uint64_t sys_open(const char *user_name, int flags) {
     }
 
     const initrd_file_t *file = initrd_find(kname);
-    if (file) {
-        int fd = fd_alloc_slot();
-        if (fd < 0) return (uint64_t)-1;
+    if (file && !writable && !create && !trunc) {
         task_fd_t *f = fd_slot(fd);
         f->used       = 1;
         f->src        = TFD_INITRD;
@@ -259,29 +291,9 @@ static uint64_t sys_open(const char *user_name, int flags) {
 }
 
 static uint64_t sys_close(int fd) {
-    uart_puts("[sys_close] called\n");
-    uart_puts("[sys_close] called\n");
     task_fd_t *f = fd_used(fd);
     if (!f) return (uint64_t)-1;
-
-    if (f->src == TFD_TCP || f->src == TFD_SOCKET) {
-        int type = (f->src == TFD_TCP) ? SOCK_STREAM : SOCK_DGRAM;
-        struct protosw *pr = pffindproto(AF_INET, type, 0);
-        if (pr && pr->pr_close) {
-            pr->pr_close(f);
-        }
-    } else if (f->src == TFD_PIPE_READ) {
-        pipe_close_read(f->pipe_idx);
-    } else if (f->src == TFD_PIPE_WRITE) {
-        pipe_close_write(f->pipe_idx);
-    }
-
-    f->used       = 0;
-    f->src        = TFD_UNUSED;
-    f->bkfs_inode = -1;
-    f->pipe_idx   = -1;
-    f->sock_idx   = -1;
-    f->tcp_idx    = -1;
+    task_fd_release(f);
     return 0;
 }
 
@@ -351,17 +363,11 @@ static uint64_t sys_dup2(int oldfd, int newfd) {
 
     // Закрыть newfd, если использовался.
     task_fd_t *fnew = fd_slot(newfd);
-    if (fnew->used) {
-        if (fnew->src == TFD_PIPE_READ)  pipe_close_read(fnew->pipe_idx);
-        if (fnew->src == TFD_PIPE_WRITE) pipe_close_write(fnew->pipe_idx);
-    }
+    task_fd_release(fnew);
 
     // Копия.
     *fnew = *fold;
-
-    // refcount для pipe.
-    if (fnew->src == TFD_PIPE_READ)  pipe_ref_read(fnew->pipe_idx);
-    if (fnew->src == TFD_PIPE_WRITE) pipe_ref_write(fnew->pipe_idx);
+    task_fd_retain(fnew);
 
     return (uint64_t)newfd;
 }
@@ -409,7 +415,8 @@ static uint64_t sys_exec(uint64_t sp, const char *user_path,
                          const char *const *user_argv)
 {
     task_t *cur = sched_current();
-    if (!cur || !cur->ttbr0_pa) return (uint64_t)-1;
+    if (!cur || !cur->cred || !cur->ttbr0_pa || !user_path)
+        return (uint64_t)-1;
 
     char kpath[128];
     int n = 0;
@@ -422,8 +429,47 @@ static uint64_t sys_exec(uint64_t sp, const char *user_path,
     kpath[sizeof(kpath) - 1] = 0;
     if (kpath[0] == 0) return (uint64_t)-1;
 
+    const uint8_t *image_data = 0;
+    uint32_t image_size = 0;
+    uint8_t *allocated_image = 0;
     const initrd_file_t *file = initrd_find(kpath);
-    if (!file) return (uint64_t)-1;
+    if (file) {
+        int is_elf_name = 0;
+        int path_len = 0;
+        while (kpath[path_len]) path_len++;
+        if (path_len >= 4 &&
+            kpath[path_len - 4] == '.' &&
+            kpath[path_len - 3] == 'e' &&
+            kpath[path_len - 2] == 'l' &&
+            kpath[path_len - 1] == 'f') {
+            is_elf_name = 1;
+        }
+        mode_t initrd_mode = is_elf_name ? 0555u : 0444u;
+        if (!cred_may_access(cur->cred, initrd_mode, ROOT_UID, ROOT_GID,
+                             CRED_X)) {
+            return (uint64_t)-1;
+        }
+        image_data = file->data;
+        image_size = file->size;
+    } else {
+        int inode = bkfs_open(kpath);
+        if (inode < 0 || !bkfs_access_allowed(cur, inode, CRED_X)) {
+            return (uint64_t)-1;
+        }
+        int file_size = bkfs_size(inode);
+        if (file_size <= 0 || (uint32_t)file_size > BKFS_MAX_FILE_SIZE)
+            return (uint64_t)-1;
+        uint32_t size = (uint32_t)file_size;
+        allocated_image = (uint8_t *)kmalloc(size);
+        if (!allocated_image) return (uint64_t)-1;
+        int loaded = bkfs_read_at(inode, 0, allocated_image, size);
+        if (loaded < 0 || (uint32_t)loaded != size) {
+            kfree(allocated_image);
+            return (uint64_t)-1;
+        }
+        image_data = allocated_image;
+        image_size = size;
+    }
 
     #define MAX_ARGC 16
     char argv_bufs[MAX_ARGC][128];
@@ -461,18 +507,36 @@ static uint64_t sys_exec(uint64_t sp, const char *user_path,
     }
 
     uint64_t new_l0 = mmu_create_user_as();
-    if (!new_l0) return (uint64_t)-1;
+    if (!new_l0) {
+        if (allocated_image) kfree(allocated_image);
+        return (uint64_t)-1;
+    }
     uint16_t new_asid = mmu_alloc_asid();
-    if (new_asid == 0) return (uint64_t)-1;
+    if (new_asid == 0) {
+        mmu_destroy_user_as(new_l0, 0);
+        if (allocated_image) kfree(allocated_image);
+        return (uint64_t)-1;
+    }
 
     elf_info_t info;
-    if (!task_load_elf_into(new_l0, new_asid, file->data, file->size, &info))
+    if (!task_load_elf_into(new_l0, new_asid, image_data, image_size, &info)) {
+        mmu_destroy_user_as(new_l0, new_asid);
+        mmu_release_asid(new_asid);
+        if (allocated_image) kfree(allocated_image);
         return (uint64_t)-1;
+    }
 
     uint64_t new_sp, new_argv;
-    if (!task_setup_user_stack(new_l0, new_asid, argc, argv_ptrs, &new_sp, &new_argv))
+    if (!task_setup_user_stack(new_l0, new_asid, argc, argv_ptrs, &new_sp, &new_argv)) {
+        mmu_destroy_user_as(new_l0, new_asid);
+        mmu_release_asid(new_asid);
+        if (allocated_image) kfree(allocated_image);
         return (uint64_t)-1;
+    }
+    if (allocated_image) kfree(allocated_image);
 
+    uint64_t old_l0 = cur->ttbr0_pa;
+    uint16_t old_asid = cur->asid;
     cur->ttbr0_pa = new_l0;
     cur->asid     = new_asid;
     cur->heap_end = USER_HEAP_BASE;
@@ -486,6 +550,8 @@ static uint64_t sys_exec(uint64_t sp, const char *user_path,
     frame[0x108 / 8] = SPSR_EL0T_UNMASKED;
     frame[0x110 / 8] = new_sp;
 
+    mmu_destroy_user_as(old_l0, old_asid);
+    mmu_release_asid(old_asid);
     return sp;
 }
 
@@ -500,13 +566,22 @@ static uint64_t sys_fork(uint64_t sp) {
     if (!child_l0) return (uint64_t)-1;
 
     uint16_t child_asid = mmu_alloc_asid();
-    if (child_asid == 0) return (uint64_t)-1;
-
-    if (!mmu_clone_user_as_cow(parent->ttbr0_pa, parent->asid, child_l0, child_asid))
+    if (child_asid == 0) {
+        mmu_destroy_user_as(child_l0, 0);
         return (uint64_t)-1;
+    }
+
+    if (!mmu_clone_user_as_cow(parent->ttbr0_pa, parent->asid, child_l0, child_asid)) {
+        mmu_release_asid(child_asid);
+        return (uint64_t)-1;
+    }
 
     task_t *child = task_fork_clone(parent, child_l0, child_asid, sp);
-    if (!child) return (uint64_t)-1;
+    if (!child) {
+        mmu_destroy_user_as(child_l0, child_asid);
+        mmu_release_asid(child_asid);
+        return (uint64_t)-1;
+    }
 
     sched_add(child);
 
@@ -532,9 +607,11 @@ static uint64_t sys_wait(uint64_t sp, int pid) {
                 if (p->parent_id == cur->id) {
                     if (pid == -1 || (uint64_t)pid == p->id) {
                         if (p->state == TASK_DEAD) {
-                            result = p->exit_code;
-                            p->state     = TASK_REAPED;
-                            p->parent_id = 0;
+                            if (sched_remove(p)) {
+                                result = p->exit_code;
+                                sched_orphan_children(p->id);
+                                task_destroy(p);
+                            }
                             break;
                         }
                         if (p->state != TASK_REAPED) {
@@ -560,10 +637,13 @@ static uint64_t sys_readdir(uint64_t sp, uint64_t idx,
 {
     (void)sp;
     if (!user_buf || max_len == 0) return (uint64_t)-1;
+    task_t *cur = sched_current();
+    if (!cur || !cur->cred) return (uint64_t)-1;
 
     char kname[64];
     uint32_t ksize = 0;
-    if (!bkfs_list((int)idx, kname, sizeof(kname), &ksize)) return (uint64_t)-1;
+    if (!bkfs_list_for((int)idx, kname, sizeof(kname), &ksize, cur->cred))
+        return (uint64_t)-1;
 
     uint32_t n = 0;
     while (kname[n] && n < max_len - 1) n++;
@@ -846,6 +926,88 @@ static uint64_t sys_getegid(void) {
     return (uint64_t)cur->cred->egid;
 }
 
+static int copy_user_path(char *dst, const char *user_path, size_t capacity) {
+    if (!user_path || capacity < 2) return 0;
+    for (size_t i = 0; i < capacity - 1; i++) {
+        if (copy_from_user(&dst[i], user_path + i, 1) < 0) return 0;
+        if (dst[i] == 0) return i != 0;
+    }
+    dst[capacity - 1] = 0;
+    return 0;
+}
+
+static uint64_t sys_chmod(const char *user_path, uint64_t mode) {
+    task_t *cur = sched_current();
+    char path[128];
+    if (!cur || !cur->cred || mode > 07777u ||
+        !copy_user_path(path, user_path, sizeof(path))) {
+        return (uint64_t)-1;
+    }
+    return bkfs_chmod_for(path, (uint32_t)mode, cur->cred) == BKFS_OK
+        ? 0 : (uint64_t)-1;
+}
+
+static int normalize_chown_id(uint64_t value, uint32_t *id) {
+    if (value == UINT64_MAX || value == UINT32_MAX) {
+        *id = UINT32_MAX;
+        return 1;
+    }
+    if (value > BKFS_MAX_ID) return 0;
+    *id = (uint32_t)value;
+    return 1;
+}
+
+static uint64_t sys_chown(const char *user_path, uint64_t raw_uid,
+                          uint64_t raw_gid) {
+    task_t *cur = sched_current();
+    char path[128];
+    uint32_t uid, gid;
+    if (!cur || !cur->cred ||
+        !normalize_chown_id(raw_uid, &uid) ||
+        !normalize_chown_id(raw_gid, &gid) ||
+        (uid == UINT32_MAX && gid == UINT32_MAX) ||
+        !copy_user_path(path, user_path, sizeof(path))) {
+        return (uint64_t)-1;
+    }
+    return bkfs_chown_for(path, uid, gid, cur->cred) == BKFS_OK
+        ? 0 : (uint64_t)-1;
+}
+
+static uint64_t sys_getgroups(int size, gid_t *user_groups) {
+    task_t *cur = sched_current();
+    if (!cur || !cur->cred || size < 0 ||
+        cur->cred->supplementary_group_count > CRED_MAX_GROUPS) {
+        return (uint64_t)-1;
+    }
+    uint32_t count = cur->cred->supplementary_group_count;
+    if (size == 0) return count;
+    if (!user_groups || (uint32_t)size < count) return (uint64_t)-1;
+    if (count != 0 &&
+        copy_to_user(user_groups, cur->cred->supplementary_groups,
+                     count * sizeof(gid_t)) < 0) {
+        return (uint64_t)-1;
+    }
+    return count;
+}
+
+static uint64_t sys_setgroups(int count, const gid_t *user_groups) {
+    task_t *cur = sched_current();
+    if (!cur || !cur->cred ||
+        count < 0 || count > CRED_MAX_GROUPS ||
+        (count != 0 && !user_groups)) {
+        return (uint64_t)-1;
+    }
+
+    gid_t groups[CRED_MAX_GROUPS];
+    if (count != 0 &&
+        copy_from_user(groups, user_groups, (size_t)count * sizeof(gid_t)) < 0) {
+        return (uint64_t)-1;
+    }
+    return cred_set_supplementary_groups(cur->cred, groups,
+                                         (uint32_t)count)
+        ? 0 : (uint64_t)-1;
+}
+
 uint64_t syscall_dispatch(uint64_t sp) {
     uint64_t *f  = (uint64_t *)sp;
     uint64_t nr  = f[8];
@@ -858,8 +1020,15 @@ uint64_t syscall_dispatch(uint64_t sp) {
     if (nr == SYS_EXIT)    return do_exit(a0, sp);
     if (nr == SYS_YIELD)   return sched_yield_from_frame(sp);
     if (nr == SYS_FORK)    return sys_fork(sp);
-    if (nr == SYS_EXEC)    return sys_exec(sp, (const char *)a0,
-                                          (const char *const *)a1);
+    if (nr == SYS_EXEC) {
+        uint64_t exec_result = sys_exec(sp, (const char *)a0,
+                                        (const char *const *)a1);
+        if (exec_result == (uint64_t)-1) {
+            f[0] = exec_result;
+            return sp;
+        }
+        return exec_result;
+    }
     if (nr == SYS_WAIT)    return sys_wait(sp, (int)a0);
 
     uint64_t ret = (uint64_t)-1;
@@ -885,6 +1054,10 @@ uint64_t syscall_dispatch(uint64_t sp) {
     if (nr == SYS_GETEUID)  ret = sys_geteuid();
     if (nr == SYS_GETGID)   ret = sys_getgid();
     if (nr == SYS_GETEGID)  ret = sys_getegid();
+    if (nr == SYS_GETGROUPS) ret = sys_getgroups((int)a0, (gid_t *)a1);
+    if (nr == SYS_SETGROUPS) ret = sys_setgroups((int)a0, (const gid_t *)a1);
+    if (nr == SYS_CHMOD)    ret = sys_chmod((const char *)a0, a1);
+    if (nr == SYS_CHOWN)    ret = sys_chown((const char *)a0, a1, a2);
 
     f[0] = ret;
     return sp;

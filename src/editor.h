@@ -18,7 +18,7 @@ typedef struct {
     int      visible_rows;   // обновляется в draw_content
 } editor_t;
 
-void editor_open (editor_t *e, const char *name);
+int  editor_open (editor_t *e, const char *name);
 void editor_close(editor_t *e);
 int  editor_is_open(const editor_t *e);
 

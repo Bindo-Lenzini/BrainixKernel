@@ -9,6 +9,7 @@ int sock_alloc(uint16_t local_port_be) {
     for (int i = 0; i < SOCK_MAX; i++) {
         if (!g_socks[i].used) {
             g_socks[i].used       = 1;
+            g_socks[i].refs       = 1;
             g_socks[i].local_port = local_port_be;
             g_socks[i].rx_head    = 0;
             g_socks[i].rx_tail    = 0;
@@ -18,9 +19,15 @@ int sock_alloc(uint16_t local_port_be) {
     return -1;
 }
 
+void sock_ref(int idx) {
+    if (idx < 0 || idx >= SOCK_MAX || !g_socks[idx].used) return;
+    if (g_socks[idx].refs != UINT16_MAX) g_socks[idx].refs++;
+}
+
 void sock_free(int idx) {
     if (idx < 0 || idx >= SOCK_MAX) return;
-    g_socks[idx].used = 0;
+    if (!g_socks[idx].used || g_socks[idx].refs == 0) return;
+    if (--g_socks[idx].refs == 0) g_socks[idx].used = 0;
 }
 
 socket_t *sock_get(int idx) {

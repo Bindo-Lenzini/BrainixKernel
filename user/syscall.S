@@ -21,6 +21,10 @@
 .global connect
 .global send
 .global recv
+.global chmod
+.global chown
+.global getgroups
+.global setgroups
 
 write:
     mov x8, #0
@@ -119,5 +123,25 @@ send:
 
 recv:
     mov x8, #19
+    svc #0
+    ret
+
+chmod:
+    mov x8, #29
+    svc #0
+    ret
+
+chown:
+    mov x8, #30
+    svc #0
+    ret
+
+getgroups:
+    mov x8, #27
+    svc #0
+    ret
+
+setgroups:
+    mov x8, #28
     svc #0
     ret

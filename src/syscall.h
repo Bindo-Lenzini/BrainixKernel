@@ -28,6 +28,10 @@
 #define SYS_GETEUID  24
 #define SYS_GETGID   25
 #define SYS_GETEGID  26
+#define SYS_GETGROUPS 27
+#define SYS_SETGROUPS 28
+#define SYS_CHMOD     29
+#define SYS_CHOWN     30
 
 uint64_t syscall_dispatch(uint64_t sp);
 

@@ -5,6 +5,7 @@
 #include "files.h"
 #include "fb.h"
 #include "bkfs.h"
+#include "cred.h"
 
 #define CLR_BODY      0xFF101C2E
 #define CLR_FG        0xFFE0E0E0
@@ -40,7 +41,8 @@ void files_refresh(files_t *f) {
     f->count = 0;
     char fname[FILES_NAME_MAX];
     uint32_t fsize;
-    for (int i = 0; bkfs_list(i, fname, FILES_NAME_MAX, &fsize); i++) {
+    const struct cred *cred = cred_ui();
+    for (int i = 0; bkfs_list_for(i, fname, FILES_NAME_MAX, &fsize, cred); i++) {
         if (f->count >= FILES_MAX_ENTRIES) break;
         str_copy_n(f->names[f->count], fname, FILES_NAME_MAX);
         f->sizes[f->count] = fsize;
@@ -186,7 +188,7 @@ void files_key(files_t *f, char c) {
 
     if (c == 0x17) {                    // DEL
         if (f->selected >= 0 && f->selected < f->count) {
-            int r = bkfs_delete(f->names[f->selected]);
+            int r = bkfs_delete_for(f->names[f->selected], cred_ui());
             files_refresh(f);
             f->status_msg = (r == BKFS_OK) ? 1 : 2;
         }

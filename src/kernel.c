@@ -468,7 +468,10 @@ static void open_files_window(void) {
     wm_raise(g_win_files_id);
 }
 static void open_editor(const char *name) {
-    editor_open(&g_edit, name);
+    if (!editor_open(&g_edit, name)) {
+        win_puts(&g_term, "permission denied or read error");
+        return;
+    }
     if (g_win_edit_id < 0)
         g_win_edit_id = wm_create(WND_EDITOR, 700, 90, 520, 620, "Editor");
     wm_show(g_win_edit_id, 1);
@@ -917,13 +920,16 @@ void kernel_main(uint64_t dtb) {
     }
 
     uart_puts("[step 23] bkfs_init\n");
-    if (bkfs_init()) {
+    int bkfs_status = bkfs_init();
+    if (bkfs_status > 0) {
         uart_puts("  [bkfs] mounted\n");
-    } else {
+    } else if (bkfs_status == 0) {
         uart_puts("  [bkfs] not formatted, formatting...\n");
         int bf_r = bkfs_format();
         if (bf_r == BKFS_OK) uart_puts("  [bkfs] formatted\n");
         else                 uart_puts("  [bkfs] format failed\n");
+    } else {
+        uart_puts("  [bkfs] incompatible or migration failed; not formatting\n");
     }
 
     uart_puts("[step 15] gpu_init\n");

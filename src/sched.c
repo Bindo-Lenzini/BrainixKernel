@@ -10,6 +10,7 @@
 
 static task_t *g_head    = 0;
 static task_t *g_current = 0;
+extern volatile int g_in_syscall;
 
 void sched_add(task_t *t) {
     if (!t) return;
@@ -19,6 +20,45 @@ void sched_add(task_t *t) {
     while (p->next != g_head) p = p->next;
     p->next = t;
     t->next = g_head;
+}
+
+int sched_remove(task_t *t) {
+    if (!t || !g_head || t == g_current) return 0;
+
+    task_t *prev = g_head;
+    while (prev->next != t && prev->next != g_head) prev = prev->next;
+    if (prev->next != t) return 0;
+
+    if (t == g_head) g_head = (t->next == t) ? 0 : t->next;
+    prev->next = t->next;
+    t->next = 0;
+    return 1;
+}
+
+void sched_orphan_children(uint64_t parent_id) {
+    if (!g_head) return;
+    task_t *p = g_head;
+    do {
+        if (p->parent_id == parent_id) p->parent_id = 0;
+        p = p->next;
+    } while (p != g_head);
+}
+
+static void reap_dead_orphans(task_t *exclude) {
+    if (!g_head) return;
+
+    uint64_t count = 1;
+    for (task_t *p = g_head->next; p != g_head; p = p->next) count++;
+
+    task_t *p = g_head;
+    for (uint64_t i = 0; i < count && g_head; i++) {
+        task_t *next = p->next;
+        if (p != exclude && p->state == TASK_DEAD && p->parent_id == 0) {
+            sched_orphan_children(p->id);
+            if (sched_remove(p)) task_destroy(p);
+        }
+        p = next;
+    }
 }
 
 static task_t *pick_next(void) {
@@ -37,6 +77,7 @@ uint64_t sched_yield_from_frame(uint64_t sp) {
     task_t *prev = g_current;
     if (!prev) return sp;
 
+    if (g_in_syscall) reap_dead_orphans(prev);
     task_t *next = pick_next();
     if (!next || next == prev) return sp;
 

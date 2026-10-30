@@ -34,6 +34,9 @@
 
 // Выдать новый ASID. Возвращает 0, если исчерпаны.
 uint16_t mmu_alloc_asid(void);
+// После освобождения адресного пространства инвалидирует его TLB-записи
+// и возвращает ASID в пул.
+void mmu_release_asid(uint16_t asid);
 
 // Установить TTBR0 для задачи с заданным ASID. Без TLB flush:
 // записи TLB, помеченные этим ASID, остаются валидными.
@@ -47,6 +50,9 @@ void mmu_init(void);
 
 // Создаёт пустую L0 для user-задачи. Возвращает PA.
 uint64_t mmu_create_user_as(void);
+// Освобождает пользовательские таблицы страниц и отображённые страницы.
+// Адресное пространство должно быть неактивно.
+void mmu_destroy_user_as(uint64_t l0_pa, uint16_t asid);
 
 // Мапит одну 4 KB страницу в TTBR0 user-задачи.
 // is_code=1 → RX (UXN=0, writable=0). is_code=0 → RW+UXN.
