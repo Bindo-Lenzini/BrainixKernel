@@ -21,6 +21,7 @@ extern void uart_putu(uint64_t v);
 #define BKFS_INODE_START  1u
 #define BKFS_INODE_SECTORS ((BKFS_INODE_COUNT * 128u) / BKFS_BLOCK_SIZE)  // 64
 #define BKFS_DATA_START   (BKFS_INODE_START + BKFS_INODE_SECTORS)         // 65
+#define BKFS_INODE_BLOCKS_OFFSET 64u
 
 // Раскладка inode и блочных указателей:
 //   blocks[0..12]  — 13 прямых блоков (6.5 KB)
@@ -204,14 +205,16 @@ static int bitmap_claim_data_block(uint32_t sector) {
     return 1;
 }
 
-static int bitmap_claim_inode_blocks(const uint32_t *blocks, uint32_t size) {
+static int bitmap_claim_inode_blocks(const uint8_t *inode, uint32_t size) {
     if (size > BKFS_MAX_FILE_SIZE) return 0;
+    const uint8_t *blocks = inode + BKFS_INODE_BLOCKS_OFFSET;
 
     for (int b = 0; b < BKFS_DIRECT_COUNT; b++) {
-        if (blocks[b] && !bitmap_claim_data_block(blocks[b])) return 0;
+        uint32_t sector = ptr_get(blocks, b);
+        if (sector && !bitmap_claim_data_block(sector)) return 0;
     }
 
-    uint32_t ind = blocks[BKFS_INDIRECT_INDEX];
+    uint32_t ind = ptr_get(blocks, BKFS_INDIRECT_INDEX);
     if (ind) {
         if (!bitmap_claim_data_block(ind)) return 0;
         uint8_t buf[BKFS_BLOCK_SIZE];
@@ -230,7 +233,7 @@ static int bitmap_rebuild(void) {
         bkfs_inode_t in;
         if (!inode_load(i, &in)) return 0;
         if (in.type == 0) continue;
-        if (!bitmap_claim_inode_blocks(in.blocks, in.size)) return 0;
+        if (!bitmap_claim_inode_blocks((const uint8_t *)&in, in.size)) return 0;
     }
     return 1;
 }
@@ -251,7 +254,8 @@ static int bitmap_validate_v2(void) {
         if (legacy->type == 0) continue;
         bkfs_inode_t *current = (bkfs_inode_t *)legacy;
         if (current->metadata_magic == BKFS_METADATA_MAGIC) {
-            if (!bitmap_claim_inode_blocks(current->blocks, current->size)) {
+            if (!bitmap_claim_inode_blocks((const uint8_t *)current,
+                                           current->size)) {
                 g_inode_cache_sector = 0xFFFFFFFFu;
                 return 0;
             }
@@ -260,7 +264,7 @@ static int bitmap_validate_v2(void) {
         if (legacy->blocks[14] != 0 ||
             legacy->pad[0] != 0 || legacy->pad[1] != 0 ||
             legacy->pad[2] != 0 || legacy->pad[3] != 0 ||
-            !bitmap_claim_inode_blocks(legacy->blocks, legacy->size)) {
+            !bitmap_claim_inode_blocks((const uint8_t *)legacy, legacy->size)) {
             g_inode_cache_sector = 0xFFFFFFFFu;
             return 0;
         }
