@@ -211,9 +211,15 @@ $(BUILD_DIR)/bkfs_test: tests/bkfs_test.c $(SRC_DIR)/bkfs.c $(SRC_DIR)/cred.c \
 	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -I$(SRC_DIR) \
 	    tests/bkfs_test.c $(SRC_DIR)/bkfs.c $(SRC_DIR)/cred.c -o $@
 
-host-test: $(BUILD_DIR)/elf_test $(BUILD_DIR)/bkfs_test
+$(BUILD_DIR)/sched_test: tests/sched_test.c $(SRC_DIR)/sched.c \
+                         $(SRC_DIR)/sched.h $(SRC_DIR)/task.h $(SRC_DIR)/mmu.h | $(BUILD_DIR)
+	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -I$(SRC_DIR) \
+	    tests/sched_test.c $(SRC_DIR)/sched.c -o $@
+
+host-test: $(BUILD_DIR)/elf_test $(BUILD_DIR)/bkfs_test $(BUILD_DIR)/sched_test
 	$(BUILD_DIR)/elf_test
 	$(BUILD_DIR)/bkfs_test
+	$(BUILD_DIR)/sched_test
 
 clean:
 	rm -rf $(BUILD_DIR)

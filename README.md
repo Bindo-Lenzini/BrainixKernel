@@ -171,7 +171,7 @@ snapshot; guest disk writes are not persisted to `disk.img`.
 
 | Check | What it covers |
 | --- | --- |
-| `make host-test` | ELF parser cases plus BKFS metadata, owner/group/supplementary-group permission, `chmod`/`chown`, and v2 migration cases |
+| `make host-test` | ELF parser cases, BKFS permissions and v2 migration, plus scheduler reaper adoption/fallback cases |
 | `make smoke` | QEMU boot, kernel self-tests, credentials, BKFS user-file creation, `chmod`/`chown`, execute-bit denial, supplementary-group privilege guard, initrd write denial, invalid open flags, user-pointer handling, pipe rollback, COW isolation, 260 repeated `exec` and fork/wait cycles, and a faulted-child teardown check |
 | GitHub Actions | Host tests, kernel build, and the headless QEMU smoke target |
 
@@ -195,9 +195,9 @@ permissions. Important limitations remain:
   interfaces; UI code must use the credential-checked high-level operations.
 - Credential and capability enforcement across syscalls remains partial.
 - Address spaces, kernel stacks, credentials, and inherited descriptors are
-  reclaimed when a parent reaps a dead child; parentless dead tasks are
-  reclaimed on a later syscall-triggered scheduling point. Orphan adoption
-  semantics are not implemented.
+  reclaimed when a parent reaps a dead child. Orphaned tasks are reparented to
+  the registered user-shell reaper; if no live reaper exists, dead parentless
+  tasks are reclaimed at a later syscall-triggered scheduling point.
 - ASIDs are recycled after `exec` and wait/reap; more lifecycle and exhaustion
   testing is still needed.
 - Writable aliases and kernel mappings need broader W^X review.
@@ -211,8 +211,7 @@ Do not treat passing tests or this feature list as a security guarantee.
 
 Near-term development priorities:
 
-1. Define orphan adoption semantics, then expand teardown and COW
-   allocation-failure tests.
+1. Expand teardown and COW allocation-failure tests.
 2. Audit syscall boundaries, authorization checks, and partial-I/O behavior.
 3. Add malformed-input, allocation-failure, and fuzz tests for BKFS, networking,
    and device interfaces.

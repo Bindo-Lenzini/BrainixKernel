@@ -65,6 +65,7 @@ static uint64_t signal_terminate(uint64_t sp, int sig) {
     if (t) {
         t->exit_code = 128 + (uint64_t)sig;
         t->state     = TASK_DEAD;
+        sched_reparent_children(t->id);
     }
     return sched_yield_from_frame(sp);
 }

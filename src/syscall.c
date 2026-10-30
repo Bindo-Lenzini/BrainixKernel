@@ -609,7 +609,7 @@ static uint64_t sys_wait(uint64_t sp, int pid) {
                         if (p->state == TASK_DEAD) {
                             if (sched_remove(p)) {
                                 result = p->exit_code;
-                                sched_orphan_children(p->id);
+                                sched_reparent_children(p->id);
                                 task_destroy(p);
                             }
                             break;
@@ -688,6 +688,7 @@ static uint64_t do_exit(uint64_t code, uint64_t sp) {
     if (cur) {
         cur->exit_code = code;
         cur->state     = TASK_DEAD;
+        sched_reparent_children(cur->id);
     }
     return sched_yield_from_frame(sp);
 }

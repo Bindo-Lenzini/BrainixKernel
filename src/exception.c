@@ -155,6 +155,7 @@ uint64_t exception_sync_handler(uint64_t sp) {
         if (cur) {
             cur->exit_code = 0xDEAD0000ULL | fsc;
             cur->state     = TASK_DEAD;
+            sched_reparent_children(cur->id);
         }
         return sched_yield_from_frame(sp);
     }
@@ -166,6 +167,7 @@ uint64_t exception_sync_handler(uint64_t sp) {
         if (cur) {
             cur->exit_code = 0xDEAD0000ULL | (esr & 0x3F);
             cur->state     = TASK_DEAD;
+            sched_reparent_children(cur->id);
         }
         return sched_yield_from_frame(sp);
     }
@@ -177,6 +179,7 @@ uint64_t exception_sync_handler(uint64_t sp) {
         if (cur) {
             cur->exit_code = 0xDEAD0000ULL | ec;
             cur->state     = TASK_DEAD;
+            sched_reparent_children(cur->id);
         }
         return sched_yield_from_frame(sp);
     }

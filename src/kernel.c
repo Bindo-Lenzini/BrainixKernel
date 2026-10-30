@@ -1020,6 +1020,7 @@ void kernel_main(uint64_t dtb) {
 
     sched_add(a);
     sched_add(ue);
+    if (ue && !sched_set_reaper(ue)) panic("failed to register init reaper");
 //     sched_add(uf);
     (void)b; (void)u1; (void)u2;
 

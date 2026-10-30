@@ -10,7 +10,19 @@
 
 static task_t *g_head    = 0;
 static task_t *g_current = 0;
+static uint64_t g_reaper_id;
 extern volatile int g_in_syscall;
+
+static task_t *find_task(uint64_t id) {
+    if (!g_head || id == 0) return 0;
+
+    task_t *p = g_head;
+    do {
+        if (p->id == id) return p;
+        p = p->next;
+    } while (p != g_head);
+    return 0;
+}
 
 void sched_add(task_t *t) {
     if (!t) return;
@@ -35,11 +47,31 @@ int sched_remove(task_t *t) {
     return 1;
 }
 
-void sched_orphan_children(uint64_t parent_id) {
+int sched_set_reaper(task_t *t) {
+    if (!t || find_task(t->id) != t ||
+        t->state == TASK_DEAD || t->state == TASK_REAPED) {
+        return 0;
+    }
+
+    g_reaper_id = t->id;
+    return 1;
+}
+
+void sched_reparent_children(uint64_t parent_id) {
     if (!g_head) return;
+
+    if (parent_id == g_reaper_id) g_reaper_id = 0;
+    task_t *reaper = find_task(g_reaper_id);
+    if (!reaper || reaper->state == TASK_DEAD ||
+        reaper->state == TASK_REAPED || reaper->id == parent_id) {
+        reaper = 0;
+    }
+
     task_t *p = g_head;
     do {
-        if (p->parent_id == parent_id) p->parent_id = 0;
+        if (p->parent_id == parent_id) {
+            p->parent_id = reaper ? reaper->id : 0;
+        }
         p = p->next;
     } while (p != g_head);
 }
@@ -54,7 +86,7 @@ static void reap_dead_orphans(task_t *exclude) {
     for (uint64_t i = 0; i < count && g_head; i++) {
         task_t *next = p->next;
         if (p != exclude && p->state == TASK_DEAD && p->parent_id == 0) {
-            sched_orphan_children(p->id);
+            sched_reparent_children(p->id);
             if (sched_remove(p)) task_destroy(p);
         }
         p = next;
