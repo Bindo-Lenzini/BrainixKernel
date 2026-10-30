@@ -9,7 +9,6 @@
 #include <stdint.h>
 #include "mmu.h"
 #include "physmem.h"
-#include "vma.h"
 
 static inline void dsb_sy(void) { __asm__ volatile("dsb sy" ::: "memory"); }
 static inline void isb(void)    { __asm__ volatile("isb"    ::: "memory"); }

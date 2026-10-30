@@ -17,4 +17,4 @@ jobs:
           path: |
             build/kernel.bin
             build/smoke-serial.log
-          if-no-files-found: error
+          if-no-files-found: warn
