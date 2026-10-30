@@ -11,6 +11,7 @@
 
 // Аллоцирует pipe. Возвращает индекс (0..PIPE_MAX-1) или -1.
 int  pipe_alloc(void);
+void pipe_abort(int idx);
 
 // Закрывает концы. Декремент refcount.
 void pipe_ref_read (int idx);

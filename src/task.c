@@ -46,7 +46,7 @@ static task_t *alloc_task(const char *name,
     task_t *t = (task_t *)kmalloc(sizeof(task_t));
     if (!t) return 0;
 
-    t->cred = cred_alloc_root();
+    t->cred = cred_alloc_unprivileged();
     if (!t->cred) { kfree(t); return 0; }
 
     uint64_t kpages = (TASK_STACK_SIZE + PAGE_SIZE - 1) / PAGE_SIZE;
@@ -173,7 +173,9 @@ int task_load_elf_into(uint64_t l0_pa, uint16_t asid,
 
     for (int i = 0; i < out_info->num_segments; i++) {
         const elf_segment_t *s = &out_info->segments[i];
-        int is_code = (s->flags & ELF_PF_X) ? 1 : 0;
+        uint32_t prot = VM_READ;
+        if (s->flags & ELF_PF_W) prot |= VM_WRITE;
+        if (s->flags & ELF_PF_X) prot |= VM_EXEC;
 
         uint64_t pages = (s->memsz + PAGE_SIZE - 1) / PAGE_SIZE;
         for (uint64_t p = 0; p < pages; p++) {
@@ -191,8 +193,11 @@ int task_load_elf_into(uint64_t l0_pa, uint16_t asid,
             }
             for (uint64_t j = copy_len; j < PAGE_SIZE; j++) pg[j] = 0;
 
-            mmu_map_user_page(l0_pa, s->vaddr + off_in_seg,
-                              KVA_TO_PA(pg), is_code, asid);
+            if (!mmu_map_user_page_prot(l0_pa, s->vaddr + off_in_seg,
+                                        KVA_TO_PA(pg), prot, asid)) {
+                phys_free_page(pg);
+                return 0;
+            }
         }
     }
     return 1;

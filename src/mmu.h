@@ -22,6 +22,10 @@
 #define USER_HEAP_BASE    0x0000000001000000ULL   // 16 MB
 #define USER_HEAP_MAX     0x0000000040000000ULL   // 1 GB (stack выше)
 
+#define VM_READ  1u
+#define VM_WRITE 2u
+#define VM_EXEC  4u
+
 // ---------- ASID (Address Space ID) ----------
 // 8-битный ASID (TCR_EL1.AS = 0 по умолчанию).
 // Значение 0 зарезервировано для kernel (TTBR0 не используется).
@@ -45,8 +49,18 @@ void mmu_init(void);
 uint64_t mmu_create_user_as(void);
 
 // Мапит одну 4 KB страницу в TTBR0 user-задачи.
+// is_code=1 → RX (UXN=0, writable=0). is_code=0 → RW+UXN.
 void mmu_map_user_page(uint64_t l0_pa, uint64_t va, uint64_t pa,
                        int is_code, uint16_t asid);
+
+// prot: VM_READ | VM_WRITE | VM_EXEC. W^X: EXEC снимает WRITE.
+int mmu_map_user_page_prot(uint64_t l0_pa, uint64_t va, uint64_t pa,
+                           uint32_t prot, uint16_t asid);
+
+int  mmu_pan_supported(void);
+void mmu_pan_enable(void);
+void mmu_pan_off(void);
+void mmu_pan_on(void);
 
 // Клонирует user AS: все валидные страницы из src_l0_pa копируются
 // в новые физические страницы и мапятся в dst_l0_pa. Используется fork.

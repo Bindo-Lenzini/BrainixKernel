@@ -40,6 +40,7 @@
 #include "icmp.h"
 #include "mmu.h"
 #include "elf.h"
+#include "uaccess.h"
 
 extern volatile int g_in_syscall;
 
@@ -63,7 +64,7 @@ static inline void isb(void)    { __asm__ volatile("isb"    ::: "memory"); }
 void uart_putc(char c) { while (*UART0_FR & UART_FR_TXFF) {} *UART0_DR = (uint32_t)c; }
 void uart_puts(const char *s) { while (*s) uart_putc(*s++); }
 void uart_puthex(uint64_t v) {
-    static const char hex[] = "059016789ABCDEF";
+    static const char hex[] = "0123456789ABCDEF";
     uart_puts("0x");
     for (int i = 60; i >= 0; i -= 4) uart_putc(hex[(v >> (uint64_t)i) & 0xF]);
 }
@@ -99,6 +100,19 @@ static void uart_init_rx(void) { *UART0_IMSC = UART_RXIM | UART_RTIM; dsb_sy(); 
 void panic(const char *msg) {
     uart_puts("\n[panic] "); uart_puts(msg); uart_puts("\n");
     for (;;) __asm__ volatile("wfe");
+}
+
+static int uaccess_range_selftest(void) {
+    uint8_t byte = 0x5A;
+    const void *kernel_va = (const void *)(uintptr_t)KERNEL_VA_OFFSET;
+    void *kernel_dst = (void *)(uintptr_t)KERNEL_VA_OFFSET;
+    const void *overflowing_user_range =
+        (const void *)(uintptr_t)(USER_VA_LIMIT - 1);
+
+    return copy_from_user(&byte, kernel_va, 1) == -1 &&
+           copy_to_user(kernel_dst, &byte, 1) == -1 &&
+           copy_from_user(&byte, overflowing_user_range, 2) == -1 &&
+           byte == 0x5A;
 }
 
 #define GICD_BASE   (0x08000000ULL + KERNEL_VA_OFFSET)
@@ -864,8 +878,19 @@ void kernel_main(uint64_t dtb) {
     }
     arp_init();
 
-    uart_puts("[step 50] sha256 selftest\n");
-    if (!sha256_selftest()) panic("sha256 selftest FAILED");
+    uart_puts("BRAINIX_UACCESS_SELFTEST_START\n");
+    if (!uaccess_range_selftest()) {
+        uart_puts("BRAINIX_UACCESS_SELFTEST_FAIL\n");
+        panic("uaccess range selftest FAILED");
+    }
+    uart_puts("BRAINIX_UACCESS_SELFTEST_OK\n");
+
+    uart_puts("BRAINIX_SELFTEST_START: SHA-256/HMAC\n");
+    if (!sha256_selftest()) {
+        uart_puts("BRAINIX_SELFTEST_FAIL: SHA-256/HMAC\n");
+        panic("sha256 selftest FAILED");
+    }
+    uart_puts("BRAINIX_SELFTEST_OK: SHA-256/HMAC\n");
     net_print_mac("  [net] my MAC = ", net_get_mac().b);
     net_print_ip ("  [net] my IP  = ", net_get_ip());
     net_print_ip ("  [net] gateway = ", net_get_gateway());
@@ -977,6 +1002,11 @@ void kernel_main(uint64_t dtb) {
             uart_puts("\n");
         } else {
             uart_puts("  [elf] U-shell created\n");
+            if (!ue->cred || ue->cred->euid != DEFAULT_UID ||
+                ue->cred->cap_effective != 0 || ue->cred->cap_permitted != 0) {
+                panic("user task has unexpected privileges");
+            }
+            uart_puts("BRAINIX_CREDENTIAL_SELFTEST_OK\n");
         }
     } else {
         uart_puts("  [elf] sh.elf not found in initrd\n");
@@ -992,6 +1022,7 @@ void kernel_main(uint64_t dtb) {
 
     uart_puts("[step 11] starting scheduler\n");
     uart_puts("  >> ICMP ping test active <<\n");
+    uart_puts("BRAINIX_BOOT_OK: kernel initialization complete\n");
 
     uart_puts("[vnc] Connecting to 10.0.2.2:5901...\n");
     // vnc_connect((const uint8_t[]){10,0,2,2}, 5901);

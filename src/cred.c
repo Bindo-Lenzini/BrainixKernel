@@ -10,10 +10,24 @@ void cred_init_root(struct cred *c) {
     c->cap_permitted = ~0ULL;
 }
 
+void cred_init_unprivileged(struct cred *c) {
+    c->uid = c->euid = c->suid = DEFAULT_UID;
+    c->gid = c->egid = c->sgid = DEFAULT_GID;
+    c->cap_effective = 0;
+    c->cap_permitted = 0;
+}
+
 struct cred *cred_alloc_root(void) {
     struct cred *c = (struct cred *)kmalloc(sizeof(struct cred));
     if (!c) return NULL;
     cred_init_root(c);
+    return c;
+}
+
+struct cred *cred_alloc_unprivileged(void) {
+    struct cred *c = (struct cred *)kmalloc(sizeof(struct cred));
+    if (!c) return NULL;
+    cred_init_unprivileged(c);
     return c;
 }
 

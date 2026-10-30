@@ -10,6 +10,14 @@ The project explores kernel development, virtual memory, task scheduling, system
 
 BrainixKernel is a work in progress. Features described in this document reflect the current source tree and project documentation; their availability and completeness may vary. This project is intended for development and experimentation, not production use.
 
+Latest Development Update — 2026-10-30
+
+- Hardened user-memory copy boundaries with range and overflow checks; fault recovery is limited to the active user-copy range.
+- Strengthened ELF validation and user-page permissions, including rejection of writable-executable segments and invalid segment layouts.
+- Made COW fork cloning transactional: parent mappings are changed only after a successful clone, and partial child mappings are released on failure.
+- Added regression coverage for credentials, invalid user pointers, pipe-output rollback, COW isolation, and malformed ELF inputs.
+- Added host-side ELF tests and a QEMU security smoke test to CI. Increased the smoke timeout to accommodate slower boots.
+
 Table of Contents
 Overview
 Features
@@ -262,7 +270,7 @@ Real, effective, and saved user IDs.
 Real, effective, and saved group IDs.
 Effective and permitted capability masks.
 
-The documented credential inheritance path copies credentials when a task is forked. New tasks currently default to UID 0 with all capabilities set.
+New user tasks currently default to UID/GID 1000 with no effective or permitted capabilities. A forked task inherits its parent's credentials.
 
 User-space programs can query several identity values through system calls, including UID, effective UID, GID, and effective GID.
 
@@ -287,10 +295,12 @@ The workflow runs on pushes and pull requests and performs the following steps:
 Checks out the repository.
 Installs Clang, LLD, LLVM, Python, Pillow, and DejaVu fonts on Ubuntu.
 Creates a font-path compatibility shim for the font-generation script.
-Runs a clean build with OBJCOPY=llvm-objcopy.
-Uploads build/kernel.bin as the kernel-bin artifact.
+Runs host-side ELF parser regression tests.
+Builds the kernel with OBJCOPY=llvm-objcopy.
+Runs a headless QEMU smoke test covering boot, kernel self-tests, credentials, user-pointer handling, and COW.
+Uploads the kernel image and smoke serial log as artifacts.
 
-The workflow validates the configured build process. It does not, by itself, establish that the kernel boots successfully in QEMU or that every subsystem passes runtime tests.
+The workflow tests the listed scenarios, not every kernel subsystem or security property.
 
 To inspect build results, open the Actions tab in the GitHub repository and select the relevant workflow run.
 
@@ -298,14 +308,14 @@ Current Limitations
 
 The following limitations are documented or evident from the current build configuration:
 
-Security enforcement: Credential and capability enforcement is incomplete.
+Security enforcement: Credential and capability enforcement is incomplete; filesystem access checks are partial.
 Filesystem metadata: Per-inode ownership and permission metadata are not yet implemented in bkfs.
 Multiprocessor support: The current QEMU configuration does not explicitly request multiple CPUs; the documented configuration is single-core.
-Virtual memory: Advanced memory-management features such as demand paging, mmap, and a page cache remain planned work.
+Virtual memory: Address-space teardown and allocation-failure rollback remain incomplete; ASIDs are not reused after exhaustion. Advanced features such as mmap and a page cache remain planned work.
 Scheduling: More advanced scheduling and wait-queue mechanisms remain planned work.
-Hardening: Additional memory-protection and kernel-hardening measures remain on the roadmap.
+Hardening: User ELF W^X checks and page permissions are implemented, but kernel mappings and writable aliases need broader review; other hardening remains on the roadmap.
 Platform portability: The default QEMU display backend and OBJCOPY path are macOS-specific.
-Runtime validation: A successful build is not equivalent to a successful boot or comprehensive subsystem testing.
+Runtime validation: Tests cover selected cases and are not a substitute for broader testing or independent review.
 
 These limitations are relevant when evaluating the project's current functionality and security properties.
 
@@ -325,7 +335,7 @@ Implement mmap, demand paging, and a page cache.
 Develop a more advanced scheduler, such as MLFQ or a CFS-like design.
 Add wait queues where required by the scheduler and blocking operations.
 Hardening and User Space
-Investigate W^X memory protections for user and kernel mappings.
+Extend W^X review to kernel mappings and audit writable aliases.
 Add stack canaries and appropriate ARMv8-A privilege protections.
 Evaluate ports of musl libc and BusyBox.
 Multiprocessor Support

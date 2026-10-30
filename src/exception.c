@@ -127,7 +127,7 @@ uint64_t exception_sync_handler(uint64_t sp) {
 
     // ---------- Data Abort из EL1 во время uaccess — recovery ----------
     if (ec == 0x25 && !from_el0 && __uaccess_active) {
-        if (far < USER_VA_LIMIT) {
+        if (far >= __uaccess_start && far < __uaccess_end) {
             __uaccess_active = 0;
             uint64_t *f = (uint64_t *)sp;
             f[0x100 / 8] = __uaccess_recovery_elr;

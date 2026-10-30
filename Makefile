@@ -13,6 +13,7 @@ NET_PCAP   := net.pcap
 
 CC      := clang
 LD      := ld.lld
+HOSTCC ?= cc
 OBJCOPY ?= /opt/homebrew/opt/llvm/bin/llvm-objcopy
 QEMU    := qemu-system-aarch64
 PYTHON  := python3
@@ -124,7 +125,7 @@ USER_OBJS_BASE := \
 
 USER_PROGS := test sh echo wc ls cat whoami udp_send udp_echo host tcp_connect wget
 
-.PHONY: all clean run
+.PHONY: all clean run smoke host-test
 
 all: $(KERNEL_BIN)
 
@@ -197,8 +198,18 @@ $(KERNEL_BIN): $(KERNEL_ELF)
 run: $(KERNEL_BIN) $(MEDIA_IMG) $(DISK_IMG) $(INITRD_ELFS)
 	$(QEMU) $(QEMU_FLAGS) -kernel $(KERNEL_BIN)
 
+smoke: $(KERNEL_BIN) $(DISK_IMG)
+	sh $(SCRIPTS)/smoke.sh --qemu "$(QEMU)" --kernel "$(KERNEL_BIN)" \
+	    --disk "$(DISK_IMG)" --serial-log "$(BUILD_DIR)/smoke-serial.log"
+
+$(BUILD_DIR)/elf_test: tests/elf_test.c $(SRC_DIR)/elf.c $(SRC_DIR)/elf.h | $(BUILD_DIR)
+	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -I$(SRC_DIR) \
+	    tests/elf_test.c $(SRC_DIR)/elf.c -o $@
+
+host-test: $(BUILD_DIR)/elf_test
+	$(BUILD_DIR)/elf_test
+
 clean:
 	rm -rf $(BUILD_DIR)
 	rm -f $(MEDIA_IMG)
 	rm -f $(NET_PCAP)
-	rm -f $(INITRD_ELFS)

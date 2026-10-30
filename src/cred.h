@@ -34,6 +34,8 @@ struct cred {
 
 #define ROOT_UID 0
 #define ROOT_GID 0
+#define DEFAULT_UID 1000
+#define DEFAULT_GID 1000
 
 /* Access types for cred_may_access() */
 #define CRED_R 4
@@ -42,6 +44,8 @@ struct cred {
 
 void cred_init_root(struct cred *c);
 struct cred *cred_alloc_root(void);
+void cred_init_unprivileged(struct cred *c);
+struct cred *cred_alloc_unprivileged(void);
 struct cred *cred_copy(const struct cred *src);
 void cred_free(struct cred *c);
 

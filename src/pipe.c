@@ -28,6 +28,12 @@ int pipe_alloc(void) {
     return -1;
 }
 
+void pipe_abort(int idx) {
+    if (idx < 0 || idx >= PIPE_MAX) return;
+    if (g_pipes[idx].readers == 0 && g_pipes[idx].writers == 0)
+        g_pipes[idx].used = 0;
+}
+
 void pipe_ref_read(int idx) {
     if (idx < 0 || idx >= PIPE_MAX) return;
     g_pipes[idx].readers++;

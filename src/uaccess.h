@@ -12,5 +12,7 @@ int copy_to_user  (void *user_dst, const void *src, uint64_t len);
 
 extern volatile uint64_t __uaccess_recovery_elr;
 extern volatile uint64_t __uaccess_active;
+extern volatile uint64_t __uaccess_start;
+extern volatile uint64_t __uaccess_end;
 
 #endif

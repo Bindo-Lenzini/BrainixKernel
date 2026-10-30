@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include "mmu.h"
 #include "physmem.h"
+#include "vma.h"
 
 static inline void dsb_sy(void) { __asm__ volatile("dsb sy" ::: "memory"); }
 static inline void isb(void)    { __asm__ volatile("isb"    ::: "memory"); }
@@ -45,6 +46,7 @@ static inline void isb(void)    { __asm__ volatile("isb"    ::: "memory"); }
 #define PTE_NG          (1ull << 11)   // not-global: TLB-entry тегируется ASID
 #define PTE_PXN         (1ull << 53)
 #define PTE_UXN         (1ull << 54)
+#define PTE_SW_COW      (1ull << 55)   /* was writable; RO only because of CoW */
 
 #define PTE_AP_KERNEL_RW   (0ull << 6)
 #define PTE_AP_USER_RW     (1ull << 6)
@@ -54,7 +56,7 @@ static inline void isb(void)    { __asm__ volatile("isb"    ::: "memory"); }
 // Маска «полезных» флагов листа: биты 0..11 (valid..nG) + 52..54
 // (Contiguous, PXN, UXN). Используется при COW, чтобы не терять
 // W^X-биты. PA сюда не входит — её берём отдельной маской.
-#define PTE_LEAF_FLAGS_MASK  (0xFFFull | (7ull << 52))
+#define PTE_LEAF_FLAGS_MASK  (0xFFFull | (15ull << 52))
 #define PTE_LEAF_PA_MASK     0x0000FFFFFFFFF000ULL
 
 #define DESC_TABLE       (PTE_VALID | PTE_BIT1)
@@ -91,6 +93,12 @@ static inline void isb(void)    { __asm__ volatile("isb"    ::: "memory"); }
 #define DESC_PAGE_USER_DATA \
     (PTE_VALID | PTE_BIT1 | PTE_AF | PTE_SH_IS | PTE_ATTR_IDX(0) | \
      PTE_AP_USER_RW | PTE_PXN | PTE_UXN | PTE_NG)
+
+#define DESC_PAGE_USER_RO \
+    (PTE_VALID | PTE_BIT1 | PTE_AF | PTE_SH_IS | PTE_ATTR_IDX(0) | \
+     PTE_AP_USER_RO | PTE_PXN | PTE_UXN | PTE_NG)
+
+static int g_pan_supported;
 
 #define L3_PA_BASE  0x40000000ull
 #define L3_PA_END   0x44000000ull
@@ -211,6 +219,41 @@ void mmu_init(void) {
     __asm__ volatile("ic iallu" ::: "memory");
     dsb_sy();
     isb();
+
+    /* SCTLR_EL1.WXN: writable pages are never executable at EL1. */
+    uint64_t sctlr;
+    __asm__ volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
+    sctlr |= (1ull << 19);
+    __asm__ volatile("msr sctlr_el1, %0" :: "r"(sctlr));
+    isb();
+
+    uint64_t mmfr1;
+    __asm__ volatile("mrs %0, id_aa64mmfr1_el1" : "=r"(mmfr1));
+    g_pan_supported = ((mmfr1 >> 20) & 0xF) != 0;
+    if (g_pan_supported)
+        mmu_pan_enable();
+}
+
+int mmu_pan_supported(void) { return g_pan_supported; }
+
+void mmu_pan_enable(void) {
+    if (!g_pan_supported) return;
+    uint64_t sctlr;
+    __asm__ volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
+    sctlr &= ~(1ull << 23); /* SPAN=0 → PAN set on exception entry */
+    __asm__ volatile("msr sctlr_el1, %0" :: "r"(sctlr));
+    isb();
+    mmu_pan_on();
+}
+
+void mmu_pan_off(void) {
+    if (!g_pan_supported) return;
+    __asm__ volatile(".arch_extension pan\n\tmsr pan, #0" ::: "memory");
+}
+
+void mmu_pan_on(void) {
+    if (!g_pan_supported) return;
+    __asm__ volatile(".arch_extension pan\n\tmsr pan, #1" ::: "memory");
 }
 
 uint64_t mmu_get_empty_l0_pa(void) {
@@ -237,7 +280,8 @@ void mmu_switch_ttbr0(uint64_t l0_pa, uint16_t asid) {
 
 void mmu_flush_asid(uint16_t asid) {
     // tlbi aside1, Xt — invalidate TLB entries for one ASID.
-    uint64_t a = asid;
+    uint64_t a = (uint64_t)asid << 48;
+    dsb_sy();
     __asm__ volatile("tlbi aside1, %0" :: "r"(a) : "memory");
     dsb_sy();
     isb();
@@ -274,19 +318,41 @@ static uint64_t *walk_or_alloc(uint64_t *parent, uint64_t idx) {
 
 void mmu_map_user_page(uint64_t l0_pa, uint64_t va, uint64_t pa,
                        int is_code, uint16_t asid) {
-    if (!l0_pa) return;
+    uint32_t prot = VM_READ | (is_code ? VM_EXEC : VM_WRITE);
+    (void)mmu_map_user_page_prot(l0_pa, va, pa, prot, asid);
+}
+
+int mmu_map_user_page_prot(uint64_t l0_pa, uint64_t va, uint64_t pa,
+                           uint32_t prot, uint16_t asid) {
+    if (!l0_pa || va < USER_CODE_BASE || va >= USER_VA_LIMIT ||
+        (va & 0xFFF) || (pa & 0xFFF) ||
+        (prot & ~(VM_READ | VM_WRITE | VM_EXEC)) ||
+        !(prot & (VM_READ | VM_WRITE | VM_EXEC)) ||
+        ((prot & VM_WRITE) && (prot & VM_EXEC))) {
+        return 0;
+    }
 
     uint64_t *l0 = (uint64_t *)PA_TO_KVA(l0_pa);
 
     uint64_t *l1 = walk_or_alloc(l0, idx_l0(va));
-    if (!l1) return;
+    if (!l1) return 0;
     uint64_t *l2 = walk_or_alloc(l1, idx_l1(va));
-    if (!l2) return;
+    if (!l2) return 0;
     uint64_t *l3 = walk_or_alloc(l2, idx_l2(va));
-    if (!l3) return;
+    if (!l3) return 0;
 
-    uint64_t flags = is_code ? DESC_PAGE_USER_CODE : DESC_PAGE_USER_DATA;
-    l3[idx_l3(va)] = (pa & ~0xFFFull) | flags;
+    uint64_t *entry = &l3[idx_l3(va)];
+    if (*entry & PTE_VALID) return 0;
+
+    uint64_t flags;
+    if (prot & VM_EXEC) {
+        flags = DESC_PAGE_USER_CODE;
+    } else if (prot & VM_WRITE) {
+        flags = DESC_PAGE_USER_DATA;
+    } else {
+        flags = DESC_PAGE_USER_RO;
+    }
+    *entry = pa | flags;
 
     dsb_sy();
 
@@ -297,6 +363,7 @@ void mmu_map_user_page(uint64_t l0_pa, uint64_t va, uint64_t pa,
         dsb_sy();
         isb();
     }
+    return 1;
 }
 
 // ============================================================
@@ -362,36 +429,75 @@ static int cow_walk(uint64_t *src, uint64_t *dst, int level) {
         if (!(entry & PTE_VALID)) continue;
 
         if (level == 3) {
-            // Leaf page. Share PA, mark RO.
             uint64_t pa = entry & PTE_LEAF_PA_MASK;
-            // Сохраняем ВСЕ флаги, включая PXN/UXN — иначе COW
-            // снимает W^X и делает все страницы исполняемыми для EL0.
             uint64_t flags = entry & PTE_LEAF_FLAGS_MASK;
 
+            uint16_t refs = phys_get_ref((void *)PA_TO_KVA(pa));
+            if (refs == 0 || refs == UINT16_MAX) return 0;
+
+            /* Подготавливаем COW-копию, не меняя родителя до успеха. */
+            if (!(flags & PTE_AP_RDONLY)) {
+                flags |= PTE_SW_COW;
+            }
+
             uint64_t new_entry = pa | flags | PTE_AP_RDONLY;
-
-            src[i] = new_entry;   // родитель тоже RO
-            dst[i] = new_entry;   // ребёнок видит ту же PA
-
+            dst[i] = new_entry;
             phys_inc_ref((void *)PA_TO_KVA(pa));
         } else {
-            // Промежуточная таблица. Копируем (deep), чтобы у ребёнка
-            // были свои L1/L2/L3 — иначе мутация одной таблицы
-            // затронет обоих.
             uint8_t *new_tbl = (uint8_t *)phys_alloc_page();
             if (!new_tbl) return 0;
-            for (int k = 0; k < (int)PAGE_SIZE; k++) new_tbl[k] = 0;
+
+            mem_zero(new_tbl, PAGE_SIZE);
 
             uint64_t new_pa = KVA_TO_PA(new_tbl);
             dst[i] = new_pa | DESC_TABLE;
 
-            uint64_t *src_child = (uint64_t *)PA_TO_KVA(entry & PTE_LEAF_PA_MASK);
+            uint64_t *src_child =
+                (uint64_t *)PA_TO_KVA(entry & PTE_LEAF_PA_MASK);
             uint64_t *dst_child = (uint64_t *)new_tbl;
 
-            if (!cow_walk(src_child, dst_child, level + 1)) return 0;
+            if (!cow_walk(src_child, dst_child, level + 1)) {
+                return 0;
+            }
         }
     }
+
     return 1;
+}
+
+static void cow_commit_parent(uint64_t *src, const uint64_t *dst, int level) {
+    for (int i = 0; i < 512; i++) {
+        uint64_t child_entry = dst[i];
+        if (!(child_entry & PTE_VALID)) continue;
+
+        if (level == 3) {
+            if (child_entry & PTE_SW_COW) {
+                src[i] |= PTE_AP_RDONLY | PTE_SW_COW;
+            }
+        } else {
+            uint64_t *src_child =
+                (uint64_t *)PA_TO_KVA(src[i] & PTE_LEAF_PA_MASK);
+            const uint64_t *dst_child =
+                (const uint64_t *)PA_TO_KVA(child_entry & PTE_LEAF_PA_MASK);
+            cow_commit_parent(src_child, dst_child, level + 1);
+        }
+    }
+}
+
+static void cow_destroy_partial(uint64_t *table, int level) {
+    for (int i = 0; i < 512; i++) {
+        uint64_t entry = table[i];
+        if (!(entry & PTE_VALID)) continue;
+
+        void *page = PA_TO_KVA(entry & PTE_LEAF_PA_MASK);
+        if (level == 3) {
+            phys_free_page(page);
+        } else {
+            cow_destroy_partial((uint64_t *)page, level + 1);
+            phys_free_page(page);
+        }
+        table[i] = 0;
+    }
 }
 
 int mmu_clone_user_as_cow(uint64_t src_l0_pa, uint16_t src_asid,
@@ -404,16 +510,18 @@ int mmu_clone_user_as_cow(uint64_t src_l0_pa, uint16_t src_asid,
 
     int ok = cow_walk(src_l0, dst_l0, 0);
 
-    dsb_sy();
+    if (!ok) {
+        cow_destroy_partial(dst_l0, 0);
+        phys_free_page((void *)PA_TO_KVA(dst_l0_pa));
+        return 0;
+    }
 
-    // cow_walk мутирует PTE родителя (меняет на RO). Даже если ok==0,
-    // часть страниц уже могла стать RO — надо флашить оба ASID.
-    // Без флаша родителя его TLB помнит RW → запись пройдёт без
-    // COW-fault'а → оба процесса пишут в одну физическую страницу.
+    cow_commit_parent(src_l0, dst_l0, 0);
+    dsb_sy();
     mmu_flush_asid(src_asid);
     mmu_flush_asid(dst_asid);
 
-    return ok;
+    return 1;
 }
 
 // ============================================================
@@ -421,58 +529,60 @@ int mmu_clone_user_as_cow(uint64_t src_l0_pa, uint16_t src_asid,
 // ============================================================
 
 int mmu_cow_fault(uint64_t ttbr0_pa, uint16_t asid, uint64_t va) {
-    if (!ttbr0_pa) return 0;
+    if (!ttbr0_pa || va >= USER_VA_LIMIT) return 0;
 
     uint64_t *l0 = (uint64_t *)PA_TO_KVA(ttbr0_pa);
-    uint64_t i0 = idx_l0(va);
+    uint64_t e0 = l0[idx_l0(va)];
+    if (!(e0 & PTE_VALID)) return 0;
 
-    if (!(l0[i0] & PTE_VALID)) return 0;
-    uint64_t *l1 = (uint64_t *)PA_TO_KVA(l0[i0] & PTE_LEAF_PA_MASK);
-    uint64_t i1 = idx_l1(va);
+    uint64_t *l1 = (uint64_t *)PA_TO_KVA(e0 & PTE_LEAF_PA_MASK);
+    uint64_t e1 = l1[idx_l1(va)];
+    if (!(e1 & PTE_VALID)) return 0;
 
-    if (!(l1[i1] & PTE_VALID)) return 0;
-    uint64_t *l2 = (uint64_t *)PA_TO_KVA(l1[i1] & PTE_LEAF_PA_MASK);
-    uint64_t i2 = idx_l2(va);
+    uint64_t *l2 = (uint64_t *)PA_TO_KVA(e1 & PTE_LEAF_PA_MASK);
+    uint64_t e2 = l2[idx_l2(va)];
+    if (!(e2 & PTE_VALID)) return 0;
 
-    if (!(l2[i2] & PTE_VALID)) return 0;
-    uint64_t *l3 = (uint64_t *)PA_TO_KVA(l2[i2] & PTE_LEAF_PA_MASK);
+    uint64_t *l3 = (uint64_t *)PA_TO_KVA(e2 & PTE_LEAF_PA_MASK);
     uint64_t i3 = idx_l3(va);
-
     uint64_t entry = l3[i3];
+
     if (!(entry & PTE_VALID)) return 0;
+    if (!(entry & PTE_SW_COW)) return 0;
+    if (!(entry & PTE_AP_RDONLY)) return 0;
 
     uint64_t pa = entry & PTE_LEAF_PA_MASK;
     uint64_t flags = entry & PTE_LEAF_FLAGS_MASK;
-
-    // Если RO, но refcount == 1 → просто восстановить RW.
     uint16_t ref = phys_get_ref((void *)PA_TO_KVA(pa));
 
-    if (ref <= 1) {
-        // Не shared. Снимаем RO.
-        uint64_t new_entry = pa | (flags & ~PTE_AP_RDONLY);
+    if (ref == 0) return 0;
+
+    if (ref == 1) {
+        uint64_t new_entry =
+            pa | (flags & ~(PTE_AP_RDONLY | PTE_SW_COW));
+
         l3[i3] = new_entry;
         dsb_sy();
         mmu_flush_asid(asid);
         return 1;
     }
 
-    // Shared. Копируем страницу.
     uint8_t *new_pg = (uint8_t *)phys_alloc_page();
     if (!new_pg) return 0;
 
     const uint8_t *old_pg = (const uint8_t *)PA_TO_KVA(pa);
-    for (int k = 0; k < (int)PAGE_SIZE; k++) new_pg[k] = old_pg[k];
+    for (uint64_t k = 0; k < PAGE_SIZE; k++) {
+        new_pg[k] = old_pg[k];
+    }
 
     uint64_t new_pa = KVA_TO_PA(new_pg);
+    uint64_t new_entry =
+        new_pa | (flags & ~(PTE_AP_RDONLY | PTE_SW_COW));
 
-    // Декремент старого refcount.
-    phys_free_page((void *)PA_TO_KVA(pa));
-
-    // Обновляем PTE: новая PA, RW.
-    uint64_t new_entry = new_pa | (flags & ~PTE_AP_RDONLY);
     l3[i3] = new_entry;
-
     dsb_sy();
     mmu_flush_asid(asid);
+
+    phys_free_page((void *)PA_TO_KVA(pa));
     return 1;
 }

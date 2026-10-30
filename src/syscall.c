@@ -45,6 +45,18 @@ static task_fd_t *fd_used(int fd) {
     return f;
 }
 
+static void fd_clear_slot(task_fd_t *f) {
+    f->used       = 0;
+    f->src        = TFD_UNUSED;
+    f->flags      = 0;
+    f->offset     = 0;
+    f->file       = 0;
+    f->bkfs_inode = -1;
+    f->pipe_idx   = -1;
+    f->sock_idx   = -1;
+    f->tcp_idx    = -1;
+}
+
 // ------------------------------------------------------------------
 // write
 // ------------------------------------------------------------------
@@ -283,7 +295,10 @@ static uint64_t sys_pipe(const int *user_fds) {
 
     // Занимаем rfd сразу, иначе fd_alloc_slot вернёт тот же слот.
     int rfd = fd_alloc_slot();
-    if (rfd < 0) return (uint64_t)-1;
+    if (rfd < 0) {
+        pipe_abort(idx);
+        return (uint64_t)-1;
+    }
 
     task_fd_t *fr = fd_slot(rfd);
     fr->used       = 1;
@@ -297,7 +312,8 @@ static uint64_t sys_pipe(const int *user_fds) {
 
     int wfd = fd_alloc_slot();
     if (wfd < 0) {
-        fr->used = 0;
+        pipe_close_read(idx);
+        fd_clear_slot(fr);
         return (uint64_t)-1;
     }
 
@@ -312,7 +328,13 @@ static uint64_t sys_pipe(const int *user_fds) {
     pipe_ref_write(idx);
 
     int kfds[2] = { rfd, wfd };
-    if (copy_to_user((void *)user_fds, kfds, 8) < 0) return (uint64_t)-1;
+    if (copy_to_user((void *)user_fds, kfds, sizeof(kfds)) < 0) {
+        pipe_close_read(idx);
+        pipe_close_write(idx);
+        fd_clear_slot(fr);
+        fd_clear_slot(fw);
+        return (uint64_t)-1;
+    }
     return 0;
 }
 

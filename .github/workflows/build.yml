@@ -5,10 +5,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y clang lld llvm python3 python3-pillow fonts-dejavu-core
+      - run: sudo apt-get update && sudo apt-get install -y clang lld llvm python3 python3-pillow fonts-dejavu-core qemu-system-arm
       - run: sudo mkdir -p /System/Library/Fonts && sudo cp /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf /System/Library/Fonts/SFNSMono.ttf
-      - run: make clean && make OBJCOPY=llvm-objcopy
+      - run: make host-test HOSTCC=cc
+      - run: make OBJCOPY=llvm-objcopy
+      - run: make smoke OBJCOPY=llvm-objcopy QEMU=qemu-system-aarch64
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: kernel-bin
-          path: build/kernel.bin
+          name: kernel-smoke
+          path: |
+            build/kernel.bin
+            build/smoke-serial.log
+          if-no-files-found: error
