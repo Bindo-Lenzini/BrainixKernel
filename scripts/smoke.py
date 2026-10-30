@@ -62,7 +62,8 @@ def main():
         args.qemu,
         "-M", "virt,gic-version=2",
         "-cpu", "cortex-a72",
-        "-m", "2048M",
+        # Keep the headless CI guest lightweight; the graphical VM uses 2 GiB.
+        "-m", "512M",
         "-device", "virtio-gpu-pci",
         "-device", "virtio-keyboard-pci",
         "-device", "virtio-tablet-pci",

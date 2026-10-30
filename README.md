@@ -297,7 +297,7 @@ Installs Clang, LLD, LLVM, Python, Pillow, and DejaVu fonts on Ubuntu.
 Creates a font-path compatibility shim for the font-generation script.
 Runs host-side ELF parser regression tests.
 Builds the kernel with OBJCOPY=llvm-objcopy.
-Runs a headless QEMU smoke test covering boot, kernel self-tests, credentials, user-pointer handling, and COW.
+Runs a headless QEMU smoke test with 512 MiB of guest RAM, covering boot, kernel self-tests, credentials, user-pointer handling, and COW. The smaller headless configuration reduces emulation overhead; the regular graphical VM remains configured with 2 GiB.
 Uploads the kernel image and smoke serial log as artifacts.
 
 The workflow tests the listed scenarios, not every kernel subsystem or security property.
