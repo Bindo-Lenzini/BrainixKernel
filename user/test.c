@@ -110,10 +110,20 @@ int main(int argc, char **argv) {
     }
 
     unsigned int extra_group = 1000;
-    if (getgroups(0, 0) == 0 && setgroups(1, &extra_group) == -1) {
-        puts("[cred] supplementary groups query and privilege guard enforced");
+    unsigned int groups_out[8] = {0};
+    unsigned int *bad_groups = (unsigned int *)(uintptr_t)0x20000000ULL;
+    if (getgroups(0, 0) == 0 &&
+        getgroups(1, groups_out) == 0 &&
+        getgroups(-1, groups_out) == -1 &&
+        getgroups(1, bad_groups) == 0 &&
+        setgroups(1, &extra_group) == -1 &&
+        setgroups(1, bad_groups) == -1 &&
+        setgroups(-1, &extra_group) == -1 &&
+        setgroups(9, &extra_group) == -1 &&
+        getgroups(0, 0) == 0) {
+        puts("[cred] group query, pointer/range checks and privilege guard enforced");
     } else {
-        puts("[cred] supplementary groups privilege guard failed");
+        puts("[cred] supplementary group validation or privilege guard failed");
         failures++;
     }
 
