@@ -35,6 +35,8 @@ static task_t *pick_next(void) {
 
 uint64_t sched_yield_from_frame(uint64_t sp) {
     task_t *prev = g_current;
+    if (!prev) return sp;
+
     task_t *next = pick_next();
     if (!next || next == prev) return sp;
 
@@ -69,6 +71,9 @@ void sched_wake_blocked(void) {
 
 void sched_start(void) {
     if (!g_head) return;
+
+    // Keep timer IRQs from switching away before the first task frame is restored.
+    __asm__ volatile("msr daifset, #2\n\tisb" ::: "memory");
     g_current = g_head;
     g_current->state = TASK_RUNNING;
     if (g_current->ttbr0_pa) mmu_switch_ttbr0(g_current->ttbr0_pa, g_current->asid);
