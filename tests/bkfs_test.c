@@ -32,6 +32,7 @@ typedef struct __attribute__((packed)) {
 } test_inode_v2_t;
 
 static uint8_t disk[TEST_SECTORS][TEST_BLOCK_SIZE];
+static uint8_t disk_before[TEST_SECTORS][TEST_BLOCK_SIZE];
 static int fail_write_sector = -1;
 static int fail_read_sector = -1;
 static int failures;
@@ -97,10 +98,93 @@ static void create_v2_image(void) {
     memcpy(disk[TEST_DATA_START], "data", 4);
 }
 
+static void create_v3_image(void) {
+    test_super_t super;
+    memset(&super, 0, sizeof(super));
+    super.magic = TEST_MAGIC;
+    super.version = 3;
+    super.block_size = TEST_BLOCK_SIZE;
+    super.total_blocks = TEST_SECTORS;
+    super.inode_count = TEST_INODE_COUNT;
+    super.inode_start = 1;
+    super.data_start = TEST_DATA_START;
+    memcpy(disk[0], &super, sizeof(super));
+
+    struct __attribute__((packed)) {
+        uint8_t type;
+        char name[59];
+        uint32_t size;
+        uint32_t blocks[14];
+        uint16_t uid, gid, mode, metadata_magic;
+    } *inode = (void *)disk[1];
+    inode[0].type = 1;
+    memcpy(inode[0].name, "pointer-check", sizeof("pointer-check"));
+    inode[0].size = 1;
+    inode[0].uid = 0;
+    inode[0].gid = 0;
+    inode[0].mode = 0644;
+    inode[0].metadata_magic = 0xB35A;
+}
+
+static int rejected_without_disk_write(void) {
+    memcpy(disk_before, disk, sizeof(disk));
+    return bkfs_init() == -1 && memcmp(disk, disk_before, sizeof(disk)) == 0;
+}
+
 int main(void) {
     reset_disk();
     check(bkfs_init() == 0, "blank disk identified as unformatted");
     check(bkfs_format() == BKFS_OK, "new v3 filesystem formatted");
+
+    reset_disk();
+    disk[100][0] = 0xA5;
+    check(rejected_without_disk_write() && disk[100][0] == 0xA5,
+          "zero superblock with existing disk data is not treated as blank");
+
+    reset_disk();
+    fail_read_sector = 17;
+    check(bkfs_init() == -1, "read error during blank-disk scan fails closed");
+    fail_read_sector = -1;
+
+    reset_disk();
+    create_v3_image();
+    ((uint32_t *)(void *)(disk[1] + 64))[0] = UINT32_MAX;
+    check(rejected_without_disk_write(),
+          "out-of-range direct block pointer is rejected without writes");
+
+    reset_disk();
+    create_v3_image();
+    ((uint32_t *)(void *)(disk[1] + 64))[0] = 1;
+    check(rejected_without_disk_write(),
+          "metadata-sector file pointer is rejected without writes");
+
+    reset_disk();
+    create_v3_image();
+    ((uint32_t *)(void *)(disk[1] + 64))[13] = TEST_SECTORS;
+    check(rejected_without_disk_write(),
+          "out-of-range indirect table pointer is rejected without writes");
+
+    reset_disk();
+    create_v3_image();
+    ((uint32_t *)(void *)(disk[1] + 64))[13] = TEST_DATA_START;
+    ((uint32_t *)(void *)disk[TEST_DATA_START])[0] = UINT32_MAX;
+    check(rejected_without_disk_write(),
+          "out-of-range indirect data pointer is rejected without writes");
+
+    reset_disk();
+    create_v3_image();
+    ((uint32_t *)(void *)(disk[1] + 64))[0] = TEST_DATA_START;
+    uint8_t *second_inode = disk[1] + 128;
+    second_inode[0] = 1;
+    memcpy(second_inode + 1, "duplicate-pointer", sizeof("duplicate-pointer"));
+    ((uint32_t *)(void *)second_inode)[16] = TEST_DATA_START;
+    ((uint16_t *)(void *)(second_inode + 120))[3] = 0xB35A;
+    check(rejected_without_disk_write(),
+          "duplicate file block ownership is rejected without writes");
+
+    reset_disk();
+    check(bkfs_init() == 0 && bkfs_format() == BKFS_OK,
+          "fresh disk formatted after corruption tests");
 
     int inode = -1;
     check(bkfs_create_for("owned", cred_ui(), 0640) == BKFS_OK,
@@ -215,6 +299,13 @@ int main(void) {
           bkfs_get_metadata(inode, &uid, &gid, &mode) == BKFS_OK &&
           uid == 1000 && gid == 3000 && mode == 0750,
           "chmod and chown metadata persist after remount");
+
+    reset_disk();
+    create_v2_image();
+    ((test_inode_v2_t *)(void *)disk[1])[0].blocks[0] = TEST_SECTORS;
+    check(rejected_without_disk_write() &&
+          ((test_super_t *)disk[0])->version == 2,
+          "malformed v2 block pointer is rejected before migration writes");
 
     reset_disk();
     create_v2_image();

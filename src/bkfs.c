@@ -101,6 +101,14 @@ static int sector_is_zero(const uint8_t *sector) {
     return 1;
 }
 
+static int disk_is_zero(uint32_t total_blocks) {
+    uint8_t sector[BKFS_BLOCK_SIZE];
+    for (uint32_t s = 1; s < total_blocks; s++) {
+        if (!blk_read_sector(s, sector) || !sector_is_zero(sector)) return 0;
+    }
+    return 1;
+}
+
 // Побайтовая работа с 32-битными указателями в блоке (без выравнивания).
 static uint32_t ptr_get(const uint8_t *buf, int idx) {
     const uint8_t *p = buf + idx * 4;
@@ -181,33 +189,84 @@ static void free_block(uint32_t s) {
 }
 
 // Полная пересборка bitmap: сканирует все inode (direct + indirect).
-static void bitmap_rebuild(void) {
+static void bitmap_init(void) {
     for (uint32_t i = 0; i < sizeof(g_block_bitmap); i++) g_block_bitmap[i] = 0;
-
-    // Системные блоки заняты.
     bm_set(0);
     for (uint32_t s = BKFS_INODE_START; s < BKFS_DATA_START; s++) bm_set(s);
+}
 
-    for (uint32_t i = 0; i < BKFS_INODE_COUNT; i++) {
-        bkfs_inode_t in;
-        if (!inode_load(i, &in)) continue;
-        if (in.type == 0) continue;
+static int bitmap_claim_data_block(uint32_t sector) {
+    if (sector < BKFS_DATA_START || sector >= g_total_blocks ||
+        sector >= MAX_DISK_SECTORS || bm_test(sector)) {
+        return 0;
+    }
+    bm_set(sector);
+    return 1;
+}
 
-        for (int b = 0; b < BKFS_DIRECT_COUNT; b++) {
-            if (in.blocks[b]) bm_set(in.blocks[b]);
-        }
-        uint32_t ind = in.blocks[BKFS_INDIRECT_INDEX];
-        if (ind) {
-            bm_set(ind);
-            uint8_t buf[512];
-            if (blk_read_sector(ind, buf)) {
-                for (int j = 0; j < (int)BKFS_INDIRECT_PTRS; j++) {
-                    uint32_t s = ptr_get(buf, j);
-                    if (s) bm_set(s);
-                }
-            }
+static int bitmap_claim_inode_blocks(const uint32_t *blocks, uint32_t size) {
+    if (size > BKFS_MAX_FILE_SIZE) return 0;
+
+    for (int b = 0; b < BKFS_DIRECT_COUNT; b++) {
+        if (blocks[b] && !bitmap_claim_data_block(blocks[b])) return 0;
+    }
+
+    uint32_t ind = blocks[BKFS_INDIRECT_INDEX];
+    if (ind) {
+        if (!bitmap_claim_data_block(ind)) return 0;
+        uint8_t buf[BKFS_BLOCK_SIZE];
+        if (!blk_read_sector(ind, buf)) return 0;
+        for (int j = 0; j < (int)BKFS_INDIRECT_PTRS; j++) {
+            uint32_t sector = ptr_get(buf, j);
+            if (sector && !bitmap_claim_data_block(sector)) return 0;
         }
     }
+    return 1;
+}
+
+static int bitmap_rebuild(void) {
+    bitmap_init();
+    for (uint32_t i = 0; i < BKFS_INODE_COUNT; i++) {
+        bkfs_inode_t in;
+        if (!inode_load(i, &in)) return 0;
+        if (in.type == 0) continue;
+        if (!bitmap_claim_inode_blocks(in.blocks, in.size)) return 0;
+    }
+    return 1;
+}
+
+static int bitmap_validate_v2(void) {
+    bitmap_init();
+    for (uint32_t i = 0; i < BKFS_INODE_COUNT; i++) {
+        uint32_t off_bytes = i * 128u;
+        uint32_t sector = BKFS_INODE_START + off_bytes / BKFS_BLOCK_SIZE;
+        if (sector != g_inode_cache_sector &&
+            !blk_read_sector(sector, g_sec)) {
+            g_inode_cache_sector = 0xFFFFFFFFu;
+            return 0;
+        }
+        g_inode_cache_sector = sector;
+        bkfs_inode_v2_t *legacy =
+            (bkfs_inode_v2_t *)(g_sec + (off_bytes % BKFS_BLOCK_SIZE));
+        if (legacy->type == 0) continue;
+        bkfs_inode_t *current = (bkfs_inode_t *)legacy;
+        if (current->metadata_magic == BKFS_METADATA_MAGIC) {
+            if (!bitmap_claim_inode_blocks(current->blocks, current->size)) {
+                g_inode_cache_sector = 0xFFFFFFFFu;
+                return 0;
+            }
+            continue;
+        }
+        if (legacy->blocks[14] != 0 ||
+            legacy->pad[0] != 0 || legacy->pad[1] != 0 ||
+            legacy->pad[2] != 0 || legacy->pad[3] != 0 ||
+            !bitmap_claim_inode_blocks(legacy->blocks, legacy->size)) {
+            g_inode_cache_sector = 0xFFFFFFFFu;
+            return 0;
+        }
+    }
+    g_inode_cache_sector = 0xFFFFFFFFu;
+    return 1;
 }
 
 // ---------- Доступ к блокам файла ----------
@@ -322,7 +381,12 @@ int bkfs_init(void) {
     if (!blk_read_sector(0, g_sec)) return -1;
 
     bkfs_super_t *sp = (bkfs_super_t *)g_sec;
-    if (sp->magic != BKFS_MAGIC) return sector_is_zero(g_sec) ? 0 : -1;
+    if (sp->magic != BKFS_MAGIC) {
+        if (!sector_is_zero(g_sec)) return -1;
+        uint64_t capacity = blk_capacity();
+        if (capacity > MAX_DISK_SECTORS) capacity = MAX_DISK_SECTORS;
+        return disk_is_zero((uint32_t)capacity) ? 0 : -1;
+    }
     if (sp->block_size != BKFS_BLOCK_SIZE ||
         sp->inode_count != BKFS_INODE_COUNT ||
         sp->inode_start != BKFS_INODE_START ||
@@ -332,12 +396,17 @@ int bkfs_init(void) {
         return -1;
     }
 
+    g_total_blocks = sp->total_blocks;
     if (sp->version == BKFS_VERSION_LEGACY) {
+        if (!bitmap_validate_v2()) return -1;
+        if (!blk_read_sector(0, g_sec)) return -1;
+        sp = (bkfs_super_t *)g_sec;
         sp->version = BKFS_MIGRATING_VERSION;
         if (!blk_write_sector(0, g_sec) || !migrate_v2()) return -1;
         if (!blk_read_sector(0, g_sec)) return -1;
         sp = (bkfs_super_t *)g_sec;
     } else if (sp->version == BKFS_MIGRATING_VERSION) {
+        if (!bitmap_validate_v2()) return -1;
         if (!migrate_v2()) return -1;
         if (!blk_read_sector(0, g_sec)) return -1;
         sp = (bkfs_super_t *)g_sec;
@@ -351,8 +420,8 @@ int bkfs_init(void) {
 
     g_inode_cache_sector = 0xFFFFFFFFu;
     if (!metadata_validate()) return -1;
+    if (!bitmap_rebuild()) return -1;
     g_ready = 1;
-    bitmap_rebuild();
     return 1;
 }
 

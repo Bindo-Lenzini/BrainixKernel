@@ -85,8 +85,11 @@ compliance, complete functionality, or comprehensive testing.
   each inode. `open`, `read`, `write`, truncation, `exec`, `chmod`, `chown`,
   listing, and deletion apply credential checks. Supplementary groups are
   inherited across `fork`, limited to 8, and can only be changed by a process
-  with `CAP_SETGID`. Existing v2 files migrate as root-owned mode `0644`;
-  migration is resumable and incompatible disks are not autoformatted.
+  with `CAP_SETGID`. Mount rejects invalid, duplicate, or out-of-range block
+  pointers before exposing the filesystem. Automatic first-time formatting is
+  limited to media whose supported sectors are all zero. Existing v2 files
+  migrate as root-owned mode `0644`; migration is resumable and incompatible
+  disks are not autoformatted.
 - **Kernel UI filesystem access:** the kernel shell, editor, and file manager
   use an explicit unprivileged UID/GID 1000 identity rather than inheriting the
   interrupted task's credentials. The UI cannot format BKFS or bypass per-file
@@ -171,7 +174,7 @@ snapshot; guest disk writes are not persisted to `disk.img`.
 
 | Check | What it covers |
 | --- | --- |
-| `make host-test` | ELF parser cases, BKFS permissions and v2 migration, scheduler reaper adoption/fallback, and COW allocation-failure rollback |
+| `make host-test` | ELF parser cases, BKFS permissions, malformed block-pointer rejection, blank-disk detection and v2 migration, scheduler reaper adoption/fallback, and COW allocation-failure rollback |
 | `make smoke` | QEMU boot, kernel self-tests, credentials, BKFS user-file creation, `chmod`/`chown`, execute-bit denial, supplementary-group pointer/range/privilege checks, initrd write denial, invalid open flags, user-pointer handling, pipe rollback, COW isolation, 260 repeated `exec` and fork/wait cycles, and a faulted-child teardown check |
 | GitHub Actions | Host tests, kernel build, and the headless QEMU smoke target |
 

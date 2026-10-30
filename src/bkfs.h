@@ -27,7 +27,8 @@
 // Максимум файла: 13 direct + 128 indirect = 141 блок × 512 = 72192 байт.
 #define BKFS_MAX_FILE_SIZE 72192u
 
-// Returns 1 when mounted, 0 for a blank disk, and -1 on I/O/format errors.
+// Returns 1 when mounted, 0 only for an all-zero supported disk, and -1 on
+// I/O, corruption, or format errors.
 int  bkfs_init(void);
 int  bkfs_format(void);
 int  bkfs_is_ready(void);
