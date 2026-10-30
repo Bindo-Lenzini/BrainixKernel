@@ -7,8 +7,13 @@
 // Смещение ядра: KVA = PA + KERNEL_VA_OFFSET (верхняя половина VA).
 #define KERNEL_VA_OFFSET  0xFFFF000000000000ULL
 
+#ifdef MMU_HOST_TEST
+#define PA_TO_KVA(pa)  ((void *)(uintptr_t)(pa))
+#define KVA_TO_PA(kva) ((uint64_t)(uintptr_t)(kva))
+#else
 #define PA_TO_KVA(pa)  ((void *)((uint64_t)(pa) + KERNEL_VA_OFFSET))
 #define KVA_TO_PA(kva) ((uint64_t)(kva) - KERNEL_VA_OFFSET)
+#endif
 
 // User VA layout (нижняя половина, TTBR0).
 #define USER_CODE_BASE    0x0000000000010000ULL

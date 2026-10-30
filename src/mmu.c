@@ -10,8 +10,16 @@
 #include "mmu.h"
 #include "physmem.h"
 
+#ifdef MMU_HOST_TEST
+#define MMU_HOST_UNUSED __attribute__((unused))
+static inline void dsb_sy(void) { }
+static inline void isb(void) __attribute__((unused));
+static inline void isb(void) { }
+#else
+#define MMU_HOST_UNUSED
 static inline void dsb_sy(void) { __asm__ volatile("dsb sy" ::: "memory"); }
 static inline void isb(void)    { __asm__ volatile("isb"    ::: "memory"); }
+#endif
 
 // ---------- TCR_EL1 ----------
 #define TCR_T0SZ_16     (16ull)
@@ -129,6 +137,8 @@ static void mem_zero(void *p, uint64_t n) {
     for (uint64_t i = 0; i < n; i++) b[i] = 0;
 }
 
+static void build_ttbr1(void) MMU_HOST_UNUSED;
+
 static void build_ttbr1(void) {
     l0_hi[0] = tbl_pa(l1_hi) | DESC_TABLE;
 
@@ -176,6 +186,8 @@ static void apply_kernel_page_range(uint64_t kva_start, uint64_t kva_end,
     }
 }
 
+static void apply_kernel_protections(void) MMU_HOST_UNUSED;
+
 static void apply_kernel_protections(void) {
     if ((uint64_t)&__stack_top >= L3_PA_END + KERNEL_VA_OFFSET) return;
 
@@ -194,6 +206,9 @@ static void apply_kernel_protections(void) {
 }
 
 void mmu_init(void) {
+#ifdef MMU_HOST_TEST
+    g_pan_supported = 0;
+#else
     build_ttbr1();
     apply_kernel_protections();
 
@@ -231,11 +246,15 @@ void mmu_init(void) {
     g_pan_supported = ((mmfr1 >> 20) & 0xF) != 0;
     if (g_pan_supported)
         mmu_pan_enable();
+#endif
 }
 
 int mmu_pan_supported(void) { return g_pan_supported; }
 
 void mmu_pan_enable(void) {
+#ifdef MMU_HOST_TEST
+    (void)g_pan_supported;
+#else
     if (!g_pan_supported) return;
     uint64_t sctlr;
     __asm__ volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
@@ -243,16 +262,21 @@ void mmu_pan_enable(void) {
     __asm__ volatile("msr sctlr_el1, %0" :: "r"(sctlr));
     isb();
     mmu_pan_on();
+#endif
 }
 
 void mmu_pan_off(void) {
+#ifndef MMU_HOST_TEST
     if (!g_pan_supported) return;
     __asm__ volatile(".arch_extension pan\n\tmsr pan, #0" ::: "memory");
+#endif
 }
 
 void mmu_pan_on(void) {
+#ifndef MMU_HOST_TEST
     if (!g_pan_supported) return;
     __asm__ volatile(".arch_extension pan\n\tmsr pan, #1" ::: "memory");
+#endif
 }
 
 uint64_t mmu_get_empty_l0_pa(void) {
@@ -283,21 +307,30 @@ void mmu_release_asid(uint16_t asid) {
 }
 
 void mmu_switch_ttbr0(uint64_t l0_pa, uint16_t asid) {
+#ifndef MMU_HOST_TEST
     // TTBR0_EL1[63:48] = ASID, [47:0] = физический адрес L0.
     uint64_t ttbr0 = ((uint64_t)asid << 48) |
                      (l0_pa & 0x0000FFFFFFFFFFFFULL);
     __asm__ volatile("msr ttbr0_el1, %0" :: "r"(ttbr0));
     dsb_sy();
     isb();
+#else
+    (void)l0_pa;
+    (void)asid;
+#endif
 }
 
 void mmu_flush_asid(uint16_t asid) {
+#ifndef MMU_HOST_TEST
     // tlbi aside1, Xt — invalidate TLB entries for one ASID.
     uint64_t a = (uint64_t)asid << 48;
     dsb_sy();
     __asm__ volatile("tlbi aside1, %0" :: "r"(a) : "memory");
     dsb_sy();
     isb();
+#else
+    (void)asid;
+#endif
 }
 
 // ============================================================
@@ -400,10 +433,15 @@ int mmu_map_user_page_prot(uint64_t l0_pa, uint64_t va, uint64_t pa,
 
     if (asid != 0) {
         mmu_flush_asid(asid);
+#ifndef MMU_HOST_TEST
     } else {
         __asm__ volatile("tlbi vmalle1" ::: "memory");
         dsb_sy();
         isb();
+#else
+    } else {
+        (void)asid;
+#endif
     }
     return 1;
 }

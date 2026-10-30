@@ -17,6 +17,11 @@ HOSTCC ?= cc
 OBJCOPY ?= /opt/homebrew/opt/llvm/bin/llvm-objcopy
 QEMU    := qemu-system-aarch64
 PYTHON  := python3
+ifeq ($(shell uname -s),Darwin)
+HOST_GC_SECTIONS := -Wl,-dead_strip
+else
+HOST_GC_SECTIONS := -Wl,--gc-sections
+endif
 
 TARGET  := aarch64-elf
 
@@ -216,10 +221,19 @@ $(BUILD_DIR)/sched_test: tests/sched_test.c $(SRC_DIR)/sched.c \
 	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -I$(SRC_DIR) \
 	    tests/sched_test.c $(SRC_DIR)/sched.c -o $@
 
-host-test: $(BUILD_DIR)/elf_test $(BUILD_DIR)/bkfs_test $(BUILD_DIR)/sched_test
+$(BUILD_DIR)/mmu_cow_test: tests/mmu_cow_test.c $(SRC_DIR)/mmu.c \
+                           $(SRC_DIR)/mmu.h $(SRC_DIR)/physmem.h | $(BUILD_DIR)
+	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -DMMU_HOST_TEST \
+	    -ffunction-sections -fdata-sections -I$(SRC_DIR) \
+	    tests/mmu_cow_test.c $(SRC_DIR)/mmu.c \
+	    $(HOST_GC_SECTIONS) -o $@
+
+host-test: $(BUILD_DIR)/elf_test $(BUILD_DIR)/bkfs_test $(BUILD_DIR)/sched_test \
+           $(BUILD_DIR)/mmu_cow_test
 	$(BUILD_DIR)/elf_test
 	$(BUILD_DIR)/bkfs_test
 	$(BUILD_DIR)/sched_test
+	$(BUILD_DIR)/mmu_cow_test
 
 clean:
 	rm -rf $(BUILD_DIR)

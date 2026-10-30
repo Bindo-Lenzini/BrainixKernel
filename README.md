@@ -171,7 +171,7 @@ snapshot; guest disk writes are not persisted to `disk.img`.
 
 | Check | What it covers |
 | --- | --- |
-| `make host-test` | ELF parser cases, BKFS permissions and v2 migration, plus scheduler reaper adoption/fallback cases |
+| `make host-test` | ELF parser cases, BKFS permissions and v2 migration, scheduler reaper adoption/fallback, and COW allocation-failure rollback |
 | `make smoke` | QEMU boot, kernel self-tests, credentials, BKFS user-file creation, `chmod`/`chown`, execute-bit denial, supplementary-group privilege guard, initrd write denial, invalid open flags, user-pointer handling, pipe rollback, COW isolation, 260 repeated `exec` and fork/wait cycles, and a faulted-child teardown check |
 | GitHub Actions | Host tests, kernel build, and the headless QEMU smoke target |
 
