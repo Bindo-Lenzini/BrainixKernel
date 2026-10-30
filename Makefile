@@ -218,7 +218,7 @@ $(BUILD_DIR)/bkfs_test: tests/bkfs_test.c $(SRC_DIR)/bkfs.c $(SRC_DIR)/cred.c \
 
 $(BUILD_DIR)/sched_test: tests/sched_test.c $(SRC_DIR)/sched.c \
                          $(SRC_DIR)/sched.h $(SRC_DIR)/task.h $(SRC_DIR)/mmu.h | $(BUILD_DIR)
-	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -I$(SRC_DIR) \
+	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -DSCHED_HOST_TEST -I$(SRC_DIR) \
 	    tests/sched_test.c $(SRC_DIR)/sched.c -o $@
 
 $(BUILD_DIR)/mmu_cow_test: tests/mmu_cow_test.c $(SRC_DIR)/mmu.c \

@@ -146,7 +146,9 @@ void sched_start(void) {
     if (!g_head) return;
 
     // Keep timer IRQs from switching away before the first task frame is restored.
+#ifndef SCHED_HOST_TEST
     __asm__ volatile("msr daifset, #2\n\tisb" ::: "memory");
+#endif
     g_current = g_head;
     g_current->state = TASK_RUNNING;
     if (g_current->ttbr0_pa) mmu_switch_ttbr0(g_current->ttbr0_pa, g_current->asid);
