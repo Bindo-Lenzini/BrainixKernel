@@ -8,7 +8,6 @@
 #define SYS_EXIT     1
 #define SYS_YIELD    2
 #define SYS_READ     3
-#define SYS_OPEN     4
 #define SYS_CLOSE    5
 #define SYS_BRK      6
 #define SYS_EXEC     7
@@ -44,6 +43,7 @@
 #define SYS_FD_RESTRICT 37
 #define SYS_IPC_SEND_FILE 38
 #define SYS_IPC_RECV_FILE 39
+#define SYS_OPEN_BACKEND  40
 
 void syscall_console_configure(int ipc_idx);
 uint64_t syscall_dispatch(uint64_t sp);

@@ -19,5 +19,6 @@ typedef struct {
 } vfs_reply_t;
 
 int vfs_open(const char *path, int flags);
+int open_backend(const char *path, int flags);
 
 #endif

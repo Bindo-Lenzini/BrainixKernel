@@ -54,3 +54,7 @@ int vfs_open(const char *path, int flags) {
     close(reply_fds[0]);
     return -1;
 }
+
+int open(const char *path, int flags) {
+    return vfs_open(path, flags);
+}

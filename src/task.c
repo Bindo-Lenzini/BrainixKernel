@@ -68,6 +68,7 @@ static task_t *alloc_task(const char *name,
     t->next       = 0;
     t->to_window  = 0;
     t->console_server = 0;
+    t->vfs_backend = 0;
     t->kstack_base = (uint64_t)kstack_kva;
     t->ttbr0_pa   = 0;
     t->asid       = 0;
@@ -482,6 +483,7 @@ task_t *task_fork_clone(task_t *parent, uint64_t new_l0, uint16_t new_asid,
     child->id         = g_next_id++;
     child->state      = TASK_READY;
     child->next       = 0;
+    child->vfs_backend = 0;
     child->ttbr0_pa   = new_l0;
     child->asid       = new_asid;
     child->parent_id  = parent->id;

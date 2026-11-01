@@ -1029,6 +1029,7 @@ void kernel_main(uint64_t dtb) {
             "vfsd", vfs_file->data, vfs_file->size);
         if (!vfs_service_task)
             panic("failed to create VFS service task");
+        vfs_service_task->vfs_backend = 1;
         int vfs_ipc = ipc_alloc();
         if (vfs_ipc < 0) panic("failed to allocate VFS IPC channel");
         if (task_install_ipc_endpoint(vfs_service_task, vfs_ipc, 0,

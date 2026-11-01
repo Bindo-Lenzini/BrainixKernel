@@ -4,7 +4,7 @@
 .global write
 .global read
 .global exit
-.global open
+.global open_backend
 .global close
 .global fd_restrict
 .global yield
@@ -53,8 +53,8 @@ exit:
     svc #0
     ret
 
-open:
-    mov x8, #4
+open_backend:
+    mov x8, #40
     svc #0
     ret
 

@@ -130,13 +130,14 @@ formatting BKFS while any inode is pinned returns `EBUSY`, preventing a
 transferred capability from aliasing a reused inode. BKFS reads and writes
 continue to enforce the receiver's current file permissions.
 
-The experimental `vfsd.elf` service accepts `vfs_open(path, flags)` requests
-from the shell and its descendants and returns an attenuated file descriptor
-capability over a per-request IPC endpoint. This exercises user-space path
-brokerage and capability transfer for both initrd and BKFS files. It is not yet
-the system-wide `open` implementation: ordinary `open`, reads, writes,
-directory operations, and BKFS/block-device access still use kernel code. The
-service currently runs with the default unprivileged user credentials.
+The experimental `vfsd.elf` service accepts ordinary userland `open(path,
+flags)` calls from the shell and its descendants and returns an attenuated file
+descriptor capability over a per-request IPC endpoint. Its kernel-backed
+`open_backend` operation is restricted to the VFS service task and revoked
+when that task successfully executes another image. This exercises user-space
+path brokerage and capability transfer for initrd and BKFS files. Reads,
+writes, directory operations, and BKFS/block-device access still use kernel
+code; the service currently runs with the default unprivileged user credentials.
 
 ## UPDATE LOG
 
@@ -162,11 +163,12 @@ service currently runs with the default unprivileged user credentials.
   leave the queued capability intact. BKFS descriptors now transfer with
   selected rights and offsets; open descriptors and queued transfers pin inodes,
   so deletion and formatting fail with `EBUSY` until all references are gone.
-- Added an experimental user-space VFS open broker. `vfs_open` sends a path and
-  flags over IPC with a per-request reply endpoint; `vfsd.elf` opens the file
-  using the existing kernel backend and returns an attenuated initrd or BKFS
-  descriptor capability. Guest tests cover both filesystems; regular `open`
-  and filesystem I/O remain kernel-backed.
+- Added an experimental user-space VFS open broker. Ordinary userland `open`
+  sends a path and flags over IPC with a per-request reply endpoint; `vfsd.elf`
+  opens the file using a role-restricted kernel backend and returns an
+  attenuated initrd or BKFS descriptor capability. Guest tests cover both
+  filesystems, permission failures, and backend isolation; reads, writes, and
+  filesystem storage remain kernel-backed.
 - Shared mappings carry an explicit software PTE bit and stay writable across
   COW fork. Mapping and address-space teardown update physical-page references;
   closing endpoints releases the channel's owner reference without invalidating

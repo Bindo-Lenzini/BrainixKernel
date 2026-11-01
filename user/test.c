@@ -33,11 +33,13 @@ int main(int argc, char **argv) {
         memcmp(vfs_initrd_data, "Hello, world!", 13) == 0 &&
         vfs_open("hello.txt", O_WRONLY) == -1 &&
         vfs_open("vfs-missing.tmp", O_RDONLY) == -1;
+    int backend_open_denied =
+        open_backend("hello.txt", O_RDONLY) == -1;
     int vfs_rights_fds[2] = {-1, -1};
-    int vfs_not_delegable = vfs_initrd_fd >= 0 &&
+    int vfs_delegation_ok = vfs_initrd_fd >= 0 &&
         ipc_pair(vfs_rights_fds) == 0 &&
         ipc_send_file(vfs_rights_fds[0], "x", 2, vfs_initrd_fd,
-                      FD_RIGHT_READ) == -1;
+                      FD_RIGHT_READ) == 2;
     if (vfs_rights_fds[0] >= 0) close(vfs_rights_fds[0]);
     if (vfs_rights_fds[1] >= 0) close(vfs_rights_fds[1]);
     if (vfs_initrd_fd >= 0) close(vfs_initrd_fd);
@@ -53,9 +55,9 @@ int main(int argc, char **argv) {
         read(vfs_bkfs_fd, vfs_bkfs_data, sizeof(vfs_bkfs_data) - 1) == 7 &&
         memcmp(vfs_bkfs_data, "broker", 7) == 0;
     if (vfs_bkfs_fd >= 0) close(vfs_bkfs_fd);
-    if (vfs_initrd_ok && vfs_not_delegable &&
+    if (vfs_initrd_ok && backend_open_denied && vfs_delegation_ok &&
         vfs_bkfs_write == 7 && vfs_bkfs_ok) {
-        puts("[vfs] user-space open broker delegated initrd and BKFS descriptors");
+        puts("[vfs] open routes through broker; initrd/BKFS grants and backend isolation passed");
     } else {
         puts("[vfs] user-space open broker failed");
         failures++;

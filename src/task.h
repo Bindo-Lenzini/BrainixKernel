@@ -75,6 +75,7 @@ typedef struct task {
     struct task  *next;
     int           to_window;
     int           console_server;
+    int           vfs_backend;
     uint64_t      kstack_base;
     uint64_t      ttbr0_pa;
     uint16_t      asid;

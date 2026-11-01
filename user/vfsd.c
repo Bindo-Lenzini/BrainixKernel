@@ -38,18 +38,19 @@ int main(void) {
             continue;
         }
 
-        int file_fd = open(request.path, request.flags);
+        int file_fd = open_backend(request.path, request.flags);
         if (file_fd < 0) {
             send_error(reply_endpoint);
             close(reply_endpoint);
             continue;
         }
 
-        unsigned int file_rights = FD_RIGHT_READ | FD_RIGHT_WRITE;
+        unsigned int file_rights =
+            FD_RIGHT_READ | FD_RIGHT_WRITE | FD_RIGHT_DELEGATE;
         if ((request.flags & (O_WRONLY | O_RDWR)) == O_WRONLY) {
-            file_rights = FD_RIGHT_WRITE;
+            file_rights = FD_RIGHT_WRITE | FD_RIGHT_DELEGATE;
         } else if ((request.flags & (O_WRONLY | O_RDWR)) == O_RDONLY) {
-            file_rights = FD_RIGHT_READ;
+            file_rights = FD_RIGHT_READ | FD_RIGHT_DELEGATE;
         }
 
         vfs_reply_t reply = {0};

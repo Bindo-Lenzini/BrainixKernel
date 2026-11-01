@@ -966,6 +966,7 @@ static uint64_t sys_exec(uint64_t sp, const char *user_path,
     cur->ttbr0_pa = new_l0;
     cur->asid     = new_asid;
     cur->heap_end = USER_HEAP_BASE;
+    cur->vfs_backend = 0;
 
     mmu_switch_ttbr0(new_l0, new_asid);
 
@@ -1460,7 +1461,11 @@ uint64_t syscall_dispatch(uint64_t sp) {
     uint64_t ret = (uint64_t)-1;
     if (nr == SYS_WRITE)    ret = sys_write((int)a0, (const void *)a1, (size_t)a2);
     if (nr == SYS_READ)     ret = sys_read((int)a0, (void *)a1, (size_t)a2);
-    if (nr == SYS_OPEN)     ret = sys_open((const char *)a0, (int)a1);
+    if (nr == SYS_OPEN_BACKEND) {
+        task_t *current = sched_current();
+        if (current && current->vfs_backend)
+            ret = sys_open((const char *)a0, (int)a1);
+    }
     if (nr == SYS_CLOSE)    ret = sys_close((int)a0);
     if (nr == SYS_FD_RESTRICT) ret = sys_fd_restrict((int)a0, a1);
     if (nr == SYS_BRK)      ret = sys_brk(a0);

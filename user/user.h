@@ -8,7 +8,6 @@
 #define SYS_EXIT    1
 #define SYS_YIELD   2
 #define SYS_READ    3
-#define SYS_OPEN    4
 #define SYS_CLOSE   5
 #define SYS_BRK     6
 #define SYS_EXEC    7
@@ -38,6 +37,7 @@
 #define FD_RIGHT_ALL    0x07
 #define SYS_IPC_SEND_FILE 38
 #define SYS_IPC_RECV_FILE 39
+#define SYS_OPEN_BACKEND  40
 #define IPC_EAGAIN   (-2)
 #define IPC_MESSAGE_MAX 256
 #define IPC_SHARED_PAGE_SIZE 4096
