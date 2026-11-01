@@ -10,6 +10,13 @@
 
 #define IPC_EAGAIN          (-2)
 
+#define IPC_RIGHT_SEND      0x01
+#define IPC_RIGHT_RECEIVE   0x02
+#define IPC_RIGHT_MAP       0x04
+#define IPC_RIGHT_DELEGATE  0x08
+#define IPC_RIGHT_ALL       (IPC_RIGHT_SEND | IPC_RIGHT_RECEIVE | \
+                             IPC_RIGHT_MAP | IPC_RIGHT_DELEGATE)
+
 int ipc_alloc(void);
 void ipc_abort(int idx);
 void ipc_ref(int idx, uint8_t endpoint);
@@ -17,14 +24,15 @@ void ipc_close(int idx, uint8_t endpoint);
 int ipc_send(int idx, uint8_t endpoint, const void *message, uint32_t len);
 int ipc_send_endpoint(int idx, uint8_t endpoint, const void *message,
                       uint32_t len, int transfer_idx,
-                      uint8_t transfer_endpoint);
+                      uint8_t transfer_endpoint, uint8_t transfer_rights);
 int ipc_peek(int idx, uint8_t endpoint, void *message, uint32_t capacity);
 int ipc_peek_endpoint(int idx, uint8_t endpoint, void *message,
                       uint32_t capacity, int *transfer_idx,
-                      uint8_t *transfer_endpoint);
+                      uint8_t *transfer_endpoint, uint8_t *transfer_rights);
 int ipc_consume(int idx, uint8_t endpoint);
 int ipc_consume_endpoint(int idx, uint8_t endpoint, int *transfer_idx,
-                         uint8_t *transfer_endpoint);
+                         uint8_t *transfer_endpoint,
+                         uint8_t *transfer_rights);
 void *ipc_shared_page(int idx);
 
 #endif

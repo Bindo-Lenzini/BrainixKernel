@@ -43,6 +43,7 @@ static void fds_init(task_fd_t *fds) {
         fds[i].tcp_idx    = -1;
         fds[i].ipc_idx    = -1;
         fds[i].ipc_endpoint = 0;
+        fds[i].ipc_rights = 0;
     }
 }
 
@@ -106,6 +107,7 @@ static void task_set_ipc_descriptor(task_fd_t *descriptor, int ipc_idx,
     descriptor->tcp_idx = -1;
     descriptor->ipc_idx = ipc_idx;
     descriptor->ipc_endpoint = endpoint;
+    descriptor->ipc_rights = IPC_RIGHT_ALL;
 }
 
 int task_install_ipc_endpoint(task_t *task, int ipc_idx, uint8_t endpoint) {
@@ -113,6 +115,7 @@ int task_install_ipc_endpoint(task_t *task, int ipc_idx, uint8_t endpoint) {
     for (int fd = 3; fd < TASK_MAX_FDS; fd++) {
         if (task->fds[fd].used) continue;
         task_set_ipc_descriptor(&task->fds[fd], ipc_idx, endpoint);
+        task->fds[fd].ipc_rights = IPC_RIGHT_ALL;
         ipc_ref(ipc_idx, endpoint);
         return fd;
     }
@@ -120,10 +123,12 @@ int task_install_ipc_endpoint(task_t *task, int ipc_idx, uint8_t endpoint) {
 }
 
 int task_adopt_ipc_endpoint_at(task_t *task, int fd, int ipc_idx,
-                               uint8_t endpoint) {
+                               uint8_t endpoint, uint8_t rights) {
     if (!task || fd < 3 || fd >= TASK_MAX_FDS || endpoint > 1 ||
-        task->fds[fd].used || !ipc_shared_page(ipc_idx)) return -1;
+        task->fds[fd].used || !ipc_shared_page(ipc_idx) ||
+        rights == 0 || (rights & ~IPC_RIGHT_ALL) != 0) return -1;
     task_set_ipc_descriptor(&task->fds[fd], ipc_idx, endpoint);
+    task->fds[fd].ipc_rights = rights;
     return fd;
 }
 
@@ -148,6 +153,7 @@ void task_fd_release(task_fd_t *fd) {
     fd->tcp_idx    = -1;
     fd->ipc_idx   = -1;
     fd->ipc_endpoint = 0;
+    fd->ipc_rights = 0;
 }
 
 void task_destroy(task_t *t) {

@@ -67,6 +67,7 @@ static void fd_clear_slot(task_fd_t *f) {
     f->tcp_idx    = -1;
     f->ipc_idx    = -1;
     f->ipc_endpoint = 0;
+    f->ipc_rights = 0;
 }
 
 static int fd_access_mode(const task_fd_t *f) {
@@ -412,6 +413,7 @@ static uint64_t sys_ipc_pair(int *user_fds) {
     first->flags = 0;
     first->ipc_idx = idx;
     first->ipc_endpoint = 0;
+    first->ipc_rights = IPC_RIGHT_ALL;
 
     int second_fd = fd_alloc_slot();
     if (second_fd < 0) {
@@ -425,6 +427,7 @@ static uint64_t sys_ipc_pair(int *user_fds) {
     second->flags = 0;
     second->ipc_idx = idx;
     second->ipc_endpoint = 1;
+    second->ipc_rights = IPC_RIGHT_ALL;
 
     ipc_ref(idx, 0);
     ipc_ref(idx, 1);
@@ -439,7 +442,8 @@ static uint64_t sys_ipc_pair(int *user_fds) {
 
 static uint64_t sys_ipc_send(int fd, const void *user_message, uint64_t len) {
     task_fd_t *descriptor = fd_used(fd);
-    if (!descriptor || descriptor->src != TFD_IPC || !user_message ||
+    if (!descriptor || descriptor->src != TFD_IPC ||
+        !(descriptor->ipc_rights & IPC_RIGHT_SEND) || !user_message ||
         len == 0 || len > IPC_MESSAGE_MAX) {
         return (uint64_t)-1;
     }
@@ -454,11 +458,17 @@ static uint64_t sys_ipc_send(int fd, const void *user_message, uint64_t len) {
 }
 
 static uint64_t sys_ipc_send_endpoint(int fd, const void *user_message,
-                                      uint64_t len, int transfer_fd) {
+                                      uint64_t len, int transfer_fd,
+                                      uint64_t transfer_rights) {
     task_fd_t *descriptor = fd_used(fd);
     task_fd_t *transfer = fd_used(transfer_fd);
     if (!descriptor || descriptor->src != TFD_IPC || !transfer ||
-        transfer->src != TFD_IPC || !user_message || len == 0 ||
+        transfer->src != TFD_IPC ||
+        !(descriptor->ipc_rights & IPC_RIGHT_SEND) ||
+        !(descriptor->ipc_rights & IPC_RIGHT_DELEGATE) ||
+        !(transfer->ipc_rights & IPC_RIGHT_DELEGATE) || !user_message ||
+        transfer_rights == 0 || (transfer_rights & ~IPC_RIGHT_ALL) != 0 ||
+        (transfer_rights & ~transfer->ipc_rights) != 0 || len == 0 ||
         len > IPC_MESSAGE_MAX) {
         return (uint64_t)-1;
     }
@@ -470,7 +480,8 @@ static uint64_t sys_ipc_send_endpoint(int fd, const void *user_message,
                                   descriptor->ipc_endpoint,
                                   message, (uint32_t)len,
                                   transfer->ipc_idx,
-                                  transfer->ipc_endpoint);
+                                  transfer->ipc_endpoint,
+                                  (uint8_t)transfer_rights);
     if (result > 0) sched_wake_blocked();
     return result < 0 ? (uint64_t)(int64_t)result : (uint64_t)result;
 }
@@ -478,6 +489,7 @@ static uint64_t sys_ipc_send_endpoint(int fd, const void *user_message,
 static uint64_t sys_ipc_recv(int fd, void *user_message, uint64_t capacity) {
     task_fd_t *descriptor = fd_used(fd);
     if (!descriptor || descriptor->src != TFD_IPC || !user_message ||
+        !(descriptor->ipc_rights & IPC_RIGHT_RECEIVE) ||
         capacity == 0 || capacity > IPC_MESSAGE_MAX) {
         return (uint64_t)-1;
     }
@@ -495,11 +507,14 @@ static uint64_t sys_ipc_recv(int fd, void *user_message, uint64_t capacity) {
 }
 
 static uint64_t sys_ipc_recv_endpoint(int fd, void *user_message,
-                                      uint64_t capacity, int *user_received_fd) {
+                                      uint64_t capacity, int *user_received_fd,
+                                      uint32_t *user_received_rights) {
     task_fd_t *descriptor = fd_used(fd);
     task_t *current = sched_current();
     if (!descriptor || descriptor->src != TFD_IPC || !user_message ||
-        !user_received_fd || capacity == 0 || capacity > IPC_MESSAGE_MAX ||
+        !(descriptor->ipc_rights & IPC_RIGHT_RECEIVE) ||
+        !user_received_fd || !user_received_rights ||
+        capacity == 0 || capacity > IPC_MESSAGE_MAX ||
         !current) {
         return (uint64_t)-1;
     }
@@ -507,11 +522,14 @@ static uint64_t sys_ipc_recv_endpoint(int fd, void *user_message,
     uint8_t message[IPC_MESSAGE_MAX];
     int transfer_idx = -1;
     uint8_t transfer_endpoint = 0;
+    uint8_t transfer_rights = 0;
+    uint32_t user_rights = 0;
     int result = ipc_peek_endpoint(descriptor->ipc_idx,
                                    descriptor->ipc_endpoint, message,
                                    (uint32_t)capacity, &transfer_idx,
-                                   &transfer_endpoint);
+                                   &transfer_endpoint, &transfer_rights);
     if (result <= 0) return (uint64_t)(int64_t)result;
+    user_rights = transfer_rights;
 
     int new_fd = -1;
     if (transfer_idx >= 0) {
@@ -525,24 +543,31 @@ static uint64_t sys_ipc_recv_endpoint(int fd, void *user_message,
     }
 
     if (copy_to_user(user_message, message, (uint32_t)result) < 0 ||
-        copy_to_user(user_received_fd, &new_fd, sizeof(new_fd)) < 0) {
+        copy_to_user(user_received_fd, &new_fd, sizeof(new_fd)) < 0 ||
+        copy_to_user(user_received_rights, &user_rights,
+                     sizeof(user_rights)) < 0) {
         return (uint64_t)-1;
     }
 
     int consumed_idx = -1;
     uint8_t consumed_endpoint = 0;
+    uint8_t consumed_rights = 0;
     if (!ipc_consume_endpoint(descriptor->ipc_idx, descriptor->ipc_endpoint,
-                              &consumed_idx, &consumed_endpoint)) {
+                              &consumed_idx, &consumed_endpoint,
+                              &consumed_rights)) {
         return (uint64_t)-1;
     }
     if (consumed_idx != transfer_idx ||
-        (transfer_idx >= 0 && consumed_endpoint != transfer_endpoint)) {
+        (transfer_idx >= 0 &&
+         (consumed_endpoint != transfer_endpoint ||
+          consumed_rights != transfer_rights))) {
         if (consumed_idx >= 0) ipc_close(consumed_idx, consumed_endpoint);
         return (uint64_t)-1;
     }
     if (transfer_idx >= 0 &&
         task_adopt_ipc_endpoint_at(current, new_fd, transfer_idx,
-                                   transfer_endpoint) < 0) {
+                                   transfer_endpoint,
+                                   transfer_rights) < 0) {
         ipc_close(transfer_idx, transfer_endpoint);
         return (uint64_t)-1;
     }
@@ -554,6 +579,7 @@ static uint64_t sys_ipc_map(int fd, uint64_t user_va) {
     task_fd_t *descriptor = fd_used(fd);
     task_t *cur = sched_current();
     if (!descriptor || descriptor->src != TFD_IPC ||
+        !(descriptor->ipc_rights & IPC_RIGHT_MAP) ||
         !cur || !cur->ttbr0_pa) {
         return (uint64_t)-1;
     }
@@ -1272,9 +1298,11 @@ uint64_t syscall_dispatch(uint64_t sp) {
     if (nr == SYS_IPC_SEND_WAIT) ret = sys_ipc_send((int)a0, (const void *)a1, a2);
     if (nr == SYS_IPC_RECV_WAIT) ret = sys_ipc_recv((int)a0, (void *)a1, a2);
     if (nr == SYS_IPC_SEND_ENDPOINT)
-        ret = sys_ipc_send_endpoint((int)a0, (const void *)a1, a2, (int)a3);
+        ret = sys_ipc_send_endpoint((int)a0, (const void *)a1, a2,
+                                    (int)a3, a4);
     if (nr == SYS_IPC_RECV_ENDPOINT)
-        ret = sys_ipc_recv_endpoint((int)a0, (void *)a1, a2, (int *)a3);
+        ret = sys_ipc_recv_endpoint((int)a0, (void *)a1, a2,
+                                    (int *)a3, (uint32_t *)a4);
     if (nr == SYS_DUP2)     ret = sys_dup2((int)a0, (int)a1);
     if (nr == SYS_SOCKET)   ret = sys_socket((int)a0, (int)a1, (int)a2);
     if (nr == SYS_BIND)     ret = sys_bind((int)a0, (uint16_t)a1);

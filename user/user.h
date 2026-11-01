@@ -33,6 +33,11 @@
 #define IPC_EAGAIN   (-2)
 #define IPC_MESSAGE_MAX 256
 #define IPC_SHARED_PAGE_SIZE 4096
+#define IPC_RIGHT_SEND     0x01
+#define IPC_RIGHT_RECEIVE  0x02
+#define IPC_RIGHT_MAP      0x04
+#define IPC_RIGHT_DELEGATE 0x08
+#define IPC_RIGHT_ALL      0x0f
 #define SYS_GETUID   23
 #define SYS_GETEUID  24
 #define SYS_GETGID   25
@@ -77,9 +82,9 @@ long ipc_recv(int fd, void *message, unsigned long capacity);
 long ipc_send_wait(int fd, const void *message, unsigned long len);
 long ipc_recv_wait(int fd, void *message, unsigned long capacity);
 long ipc_send_endpoint(int fd, const void *message, unsigned long len,
-                       int transfer_fd);
+                       int transfer_fd, unsigned int transfer_rights);
 long ipc_recv_endpoint(int fd, void *message, unsigned long capacity,
-                       int *received_fd);
+                       int *received_fd, unsigned int *received_rights);
 int  ipc_map(int fd, void *address);
 int  dup2  (int oldfd, int newfd);
 int  socket(int domain, int type, int protocol);

@@ -82,12 +82,20 @@ per receiving endpoint, with a 256-byte maximum per message. The regular send
 and receive calls are nonblocking: `IPC_EAGAIN` (`-2`) means the queue is full
 or empty; blocking variants sleep and retry when queue state changes. Receive
 returns `0` for EOF after the peer closes, and invalid arguments return `-1`.
-`ipc_send_endpoint(fd, message, len, transfer_fd)` explicitly queues a
+`ipc_send_endpoint(fd, message, len, transfer_fd, rights)` explicitly queues a
 reference to an IPC endpoint along with the message; the sender keeps its fd.
 The transferred endpoint must belong to a different channel than the transport,
-and queued delegation cycles are rejected.
-`ipc_recv_endpoint(fd, message, capacity, &received_fd)` installs the delegated
-endpoint as a new fd, or writes `-1` when the message carries no endpoint.
+and queued delegation cycles are rejected. IPC endpoints carry independent
+`IPC_RIGHT_SEND`, `IPC_RIGHT_RECEIVE`, `IPC_RIGHT_MAP`, and
+`IPC_RIGHT_DELEGATE` rights. New pairs begin with all rights. Sending an
+endpoint requires delegation authority on both the transport and transferred
+endpoint, and the requested rights must be a non-empty subset of the
+transferred endpoint's rights; delegation cannot increase authority.
+`ipc_recv_endpoint(fd, message, capacity, &received_fd, &received_rights)`
+installs the delegated endpoint as a new fd and reports its rights, or writes
+`-1` and zero when the message carries no endpoint. Send, receive, and map
+operations are rejected when the corresponding right is absent. Fork and
+`dup2` preserve, but do not expand, endpoint rights.
 Ordinary receive refuses an endpoint-bearing message without consuming it.
 Queued endpoint references are released if their message is discarded with its
 channel.
@@ -105,6 +113,9 @@ page-aligned user address. The mapping remains writable and shared after
   receiving messages, and mapping an endpoint's zeroed 4 KiB shared page.
   Endpoint descriptors retain/release channel references across `fork`,
   `dup2`, `close`, and task teardown.
+- Added endpoint rights for send, receive, shared-page mapping, and delegation.
+  Endpoint transfers carry an explicitly selected subset of rights, and the
+  kernel rejects unauthorized operations and rights escalation.
 - Shared mappings carry an explicit software PTE bit and stay writable across
   COW fork. Mapping and address-space teardown update physical-page references;
   closing endpoints releases the channel's owner reference without invalidating

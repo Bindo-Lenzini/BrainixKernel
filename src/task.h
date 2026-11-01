@@ -49,6 +49,7 @@ typedef struct {
     // TFD_IPC:
     int      ipc_idx;
     uint8_t  ipc_endpoint;
+    uint8_t  ipc_rights;
 } task_fd_t;
 
 typedef enum {
@@ -97,7 +98,7 @@ void task_fd_retain(task_fd_t *fd);
 void task_fd_release(task_fd_t *fd);
 int task_install_ipc_endpoint(task_t *task, int ipc_idx, uint8_t endpoint);
 int task_adopt_ipc_endpoint_at(task_t *task, int fd, int ipc_idx,
-                               uint8_t endpoint);
+                               uint8_t endpoint, uint8_t rights);
 void task_destroy(task_t *t);
 
 #endif

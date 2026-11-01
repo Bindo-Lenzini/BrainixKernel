@@ -212,15 +212,21 @@ int main(int argc, char **argv) {
             shared[1] = 2;
 
             int received_endpoint = -1;
+            unsigned int received_rights = 0;
             char transfer_message[16];
             long invalid_fd_output = IPC_EAGAIN;
+            char forbidden_message[IPC_MESSAGE_MAX];
             for (int i = 0; i < 10000 &&
                  invalid_fd_output == IPC_EAGAIN; i++) {
                 invalid_fd_output = ipc_recv_endpoint(
                     ipc_fds[1], transfer_message, sizeof(transfer_message),
-                    (int *)(uintptr_t)0x20000000ULL);
+                    (int *)(uintptr_t)0x20000000ULL, &received_rights);
                 if (invalid_fd_output == IPC_EAGAIN) yield();
             }
+            long invalid_rights_output = ipc_recv_endpoint(
+                ipc_fds[1], transfer_message, sizeof(transfer_message),
+                &received_endpoint,
+                (unsigned int *)(uintptr_t)0x20000000ULL);
             long plain_received = IPC_EAGAIN;
             for (int i = 0; i < 10000 &&
                  plain_received == IPC_EAGAIN; i++) {
@@ -233,13 +239,21 @@ int main(int argc, char **argv) {
                  transfer_received == IPC_EAGAIN; i++) {
                 transfer_received = ipc_recv_endpoint(
                     ipc_fds[1], transfer_message, sizeof(transfer_message),
-                    &received_endpoint);
+                    &received_endpoint, &received_rights);
                 if (transfer_received == IPC_EAGAIN) yield();
             }
-            if (invalid_fd_output != -1 || plain_received != -1 ||
+            if (invalid_fd_output != -1 || invalid_rights_output != -1 ||
+                plain_received != -1 ||
                 transfer_received != 6 ||
                 memcmp(transfer_message, "grant", 6) != 0 ||
                 received_endpoint < 0 ||
+                received_rights != IPC_RIGHT_SEND ||
+                ipc_recv(received_endpoint, forbidden_message,
+                         sizeof(forbidden_message)) != -1 ||
+                ipc_map(received_endpoint, (void *)(uintptr_t)
+                        (IPC_SHARED_TEST_VA + 0x1000)) != -1 ||
+                ipc_send_endpoint(ipc_fds[1], "x", 2, received_endpoint,
+                                  IPC_RIGHT_SEND) != -1 ||
                 ipc_send(received_endpoint, "granted", 8) != 8) {
                 puts("[ipc child] endpoint delegation failed");
                 exit(33);
@@ -272,7 +286,7 @@ int main(int argc, char **argv) {
             if (!ipc_ok) puts("[ipc] shared alias writes were not visible");
 
             long transfer_sent = ipc_send_endpoint(
-                ipc_fds[0], "grant", 6, transfer_fds[1]);
+                ipc_fds[0], "grant", 6, transfer_fds[1], IPC_RIGHT_SEND);
             close(transfer_fds[1]);
             char transfer_response[16];
             long transfer_reply = IPC_EAGAIN;

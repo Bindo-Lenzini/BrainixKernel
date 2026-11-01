@@ -182,30 +182,43 @@ int main(void) {
     const char transfer_payload[] = "cap";
     passed &= check(ipc_send_endpoint(carrier, 0, transfer_payload,
                                       sizeof(transfer_payload),
-                                      capability, 0) ==
+                                      capability, 0, IPC_RIGHT_SEND) ==
                         (int)sizeof(transfer_payload),
                     "message can carry an IPC endpoint reference");
+    passed &= check(ipc_send_endpoint(carrier, 0, transfer_payload,
+                                      sizeof(transfer_payload),
+                                      capability, 0, 0) == -1 &&
+                    ipc_send_endpoint(carrier, 0, transfer_payload,
+                                      sizeof(transfer_payload), capability, 0,
+                                      IPC_RIGHT_ALL + 1) == -1,
+                    "endpoint transfer rejects empty and unknown rights");
     passed &= check(ipc_send_endpoint(capability, 1, transfer_payload,
-                                      sizeof(transfer_payload), carrier, 1) ==
+                                      sizeof(transfer_payload), carrier, 1,
+                                      IPC_RIGHT_ALL) ==
                         -1,
                     "endpoint delegation rejects reference cycles");
     ipc_close(capability, 0);
     int transferred_idx = -1;
     uint8_t transferred_endpoint = 0;
+    uint8_t transferred_rights = 0;
     passed &= check(ipc_peek(carrier, 1, received, sizeof(received)) == -1 &&
                     ipc_peek_endpoint(carrier, 1, received, sizeof(received),
                                       &transferred_idx,
-                                      &transferred_endpoint) ==
+                                      &transferred_endpoint,
+                                      &transferred_rights) ==
                         (int)sizeof(transfer_payload) &&
                     transferred_idx == capability &&
                     transferred_endpoint == 0 &&
+                    transferred_rights == IPC_RIGHT_SEND &&
                     memcmp(received, transfer_payload,
                            sizeof(transfer_payload)) == 0,
                     "plain receive preserves messages carrying capabilities");
     passed &= check(ipc_consume_endpoint(carrier, 1, &transferred_idx,
-                                         &transferred_endpoint) &&
+                                         &transferred_endpoint,
+                                         &transferred_rights) &&
                     transferred_idx == capability &&
                     transferred_endpoint == 0 &&
+                    transferred_rights == IPC_RIGHT_SEND &&
                     ipc_send(capability, transferred_endpoint, request,
                              sizeof(request)) == (int)sizeof(request),
                     "receiving endpoint adopts the queued reference");
@@ -225,7 +238,8 @@ int main(void) {
     ipc_ref(cleanup_capability, 0);
     ipc_ref(cleanup_capability, 1);
     passed &= check(ipc_send_endpoint(cleanup_carrier, 0, request,
-                                      sizeof(request), cleanup_capability, 0) ==
+                                      sizeof(request), cleanup_capability, 0,
+                                      IPC_RIGHT_SEND) ==
                         (int)sizeof(request),
                     "queued endpoint remains referenced until consumed");
     ipc_close(cleanup_capability, 0);
