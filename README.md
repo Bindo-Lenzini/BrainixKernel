@@ -74,7 +74,12 @@ receive buffer remain in the kernel; this is not yet a user-space UART driver.
 
 ### IPC API
 
-The user runtime exposes `ipc_pair(int fds[2])`, `ipc_send(fd, message, len)`,
+The user runtime exposes `ipc_pair(int fds[2])` and
+`ipc_pair_rights(int fds[2], first_rights, second_rights)`. The original
+`ipc_pair` grants all rights to both endpoints; `ipc_pair_rights` creates
+endpoints with explicit, non-empty subsets of the supported rights and rejects
+unknown bits. Services can use it to create least-authority client/server
+channels from the start. The runtime also exposes `ipc_send(fd, message, len)`,
 `ipc_recv(fd, message, capacity)`, their blocking variants
 `ipc_send_wait`/`ipc_recv_wait`, and `ipc_map(fd, address)`. Each pair creates
 two bidirectional endpoint descriptors. Message queues hold up to 8 messages
@@ -115,7 +120,9 @@ page-aligned user address. The mapping remains writable and shared after
   `dup2`, `close`, and task teardown.
 - Added endpoint rights for send, receive, shared-page mapping, and delegation.
   Endpoint transfers carry an explicitly selected subset of rights, and the
-  kernel rejects unauthorized operations and rights escalation.
+  kernel rejects unauthorized operations and rights escalation. Added
+  `ipc_pair_rights` so services can create endpoints with explicit rights
+  policies instead of starting from full-authority descriptors.
 - Shared mappings carry an explicit software PTE bit and stay writable across
   COW fork. Mapping and address-space teardown update physical-page references;
   closing endpoints releases the channel's owner reference without invalidating
@@ -210,7 +217,7 @@ snapshot; guest disk writes are not persisted to `disk.img`.
 | Check | What it covers |
 | --- | --- |
 | `make host-test` | ELF parser cases, BKFS permissions, malformed block-pointer rejection, blank-disk detection and v2 migration, scheduler reaper adoption/fallback and dead-orphan teardown, IPC queue, endpoint delegation/cycle prevention and shared-page lifetime semantics, and COW allocation-failure rollback/shared-mapping behavior |
-| `make smoke` | QEMU boot, console-server startup and shell input/output routed over IPC, kernel self-tests, credentials, BKFS user-file creation, `chmod`/`chown`, execute-bit denial, supplementary-group pointer/range/privilege checks, initrd write denial, invalid open flags, user-pointer handling, pipe and IPC rollback, shared-page aliases across `fork`, endpoint delegation between forked processes, IPC message exchange, COW isolation, 260 repeated `exec` and fork/wait cycles, and a faulted-child teardown check |
+| `make smoke` | QEMU boot, console-server startup and shell input/output routed over IPC, kernel self-tests, credentials, BKFS user-file creation, `chmod`/`chown`, execute-bit denial, supplementary-group pointer/range/privilege checks, initrd write denial, invalid open flags, user-pointer handling, pipe and IPC rollback, endpoint creation-policy validation, restricted endpoint operations and delegation, shared-page aliases across `fork`, IPC message exchange, COW isolation, 260 repeated `exec` and fork/wait cycles, and a faulted-child teardown check |
 | GitHub Actions | Host tests, kernel build, and the headless QEMU smoke target |
 
 Tests cover selected regression scenarios. They do not prove the absence of

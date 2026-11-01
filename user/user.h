@@ -30,6 +30,7 @@
 #define SYS_IPC_RECV_WAIT 33
 #define SYS_IPC_SEND_ENDPOINT 34
 #define SYS_IPC_RECV_ENDPOINT 35
+#define SYS_IPC_PAIR_RIGHTS 36
 #define IPC_EAGAIN   (-2)
 #define IPC_MESSAGE_MAX 256
 #define IPC_SHARED_PAGE_SIZE 4096
@@ -77,6 +78,8 @@ int  wait  (int pid);
 int  readdir(int idx, char *buf, int max);
 int  pipe  (int fds[2]);
 int  ipc_pair(int fds[2]);
+int  ipc_pair_rights(int fds[2], unsigned int first_rights,
+                     unsigned int second_rights);
 long ipc_send(int fd, const void *message, unsigned long len);
 long ipc_recv(int fd, void *message, unsigned long capacity);
 long ipc_send_wait(int fd, const void *message, unsigned long len);

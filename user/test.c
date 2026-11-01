@@ -169,18 +169,38 @@ int main(int argc, char **argv) {
     int ipc_bad_fds = 0;
     int ipc_fds[2] = {-1, -1};
     int transfer_fds[2] = {-1, -1};
+    int invalid_rights_fds[2] = {-1, -1};
+    int invalid_rights_rejected =
+        ipc_pair_rights(invalid_rights_fds, 0, IPC_RIGHT_ALL) == -1 &&
+        ipc_pair_rights(invalid_rights_fds, IPC_RIGHT_ALL | 0x10,
+                        IPC_RIGHT_ALL) == -1;
     for (int i = 0; i < 16; i++) {
         if (ipc_pair((int *)(uintptr_t)0x20000000ULL) == -1)
             ipc_bad_fds++;
     }
     int pair_result = ipc_pair(ipc_fds);
-    int transfer_pair_result = ipc_pair(transfer_fds);
-    int ipc_ok = ipc_bad_fds == 16 && pair_result == 0 &&
+    int transfer_pair_result = ipc_pair_rights(
+        transfer_fds, IPC_RIGHT_ALL,
+        IPC_RIGHT_SEND | IPC_RIGHT_DELEGATE);
+    int ipc_ok = ipc_bad_fds == 16 && invalid_rights_rejected &&
+                 pair_result == 0 &&
                  transfer_pair_result == 0;
+    if (!invalid_rights_rejected)
+        puts("[ipc] invalid endpoint-rights policy was accepted");
     if (ipc_bad_fds != 16) puts("[ipc] invalid-output rollback failed");
     if (pair_result != 0) puts("[ipc] endpoint pair creation failed");
     if (transfer_pair_result != 0)
         puts("[ipc] transfer endpoint pair creation failed");
+    if (ipc_ok) {
+        char denied_message[8];
+        ipc_ok = ipc_recv(transfer_fds[1], denied_message,
+                          sizeof(denied_message)) == -1 &&
+                 ipc_map(transfer_fds[1],
+                         (void *)(uintptr_t)(IPC_SHARED_TEST_VA + 0x1000)) ==
+                     -1;
+        if (!ipc_ok)
+            puts("[ipc] endpoint creation policy did not restrict rights");
+    }
     if (ipc_ok) {
         ipc_ok = ipc_map(ipc_fds[0],
                          (void *)(uintptr_t)IPC_SHARED_TEST_VA) == 0 &&
@@ -285,6 +305,8 @@ int main(int argc, char **argv) {
             ipc_ok = shared[0] == 0x43;
             if (!ipc_ok) puts("[ipc] shared alias writes were not visible");
 
+            long escalation_attempt = ipc_send_endpoint(
+                ipc_fds[0], "grant", 6, transfer_fds[1], IPC_RIGHT_ALL);
             long transfer_sent = ipc_send_endpoint(
                 ipc_fds[0], "grant", 6, transfer_fds[1], IPC_RIGHT_SEND);
             close(transfer_fds[1]);
@@ -296,7 +318,8 @@ int main(int argc, char **argv) {
                                           sizeof(transfer_response));
                 if (transfer_reply == IPC_EAGAIN) yield();
             }
-            ipc_ok = ipc_ok && transfer_sent == 6 &&
+            ipc_ok = ipc_ok && escalation_attempt == -1 &&
+                     transfer_sent == 6 &&
                      transfer_reply == 8 &&
                      memcmp(transfer_response, "granted", 8) == 0;
             if (!ipc_ok) puts("[ipc] delegated endpoint was not usable");

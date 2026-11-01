@@ -14,6 +14,7 @@
 .global readdir
 .global pipe
 .global ipc_pair
+.global ipc_pair_rights
 .global ipc_send
 .global ipc_recv
 .global ipc_send_wait
@@ -96,6 +97,11 @@ pipe:
 
 ipc_pair:
     mov x8, #20
+    svc #0
+    ret
+
+ipc_pair_rights:
+    mov x8, #36
     svc #0
     ret
 

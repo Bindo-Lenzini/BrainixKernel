@@ -397,8 +397,13 @@ static uint64_t sys_pipe(const int *user_fds) {
     return 0;
 }
 
-static uint64_t sys_ipc_pair(int *user_fds) {
-    if (!user_fds) return (uint64_t)-1;
+static uint64_t sys_ipc_pair(int *user_fds, uint64_t first_rights,
+                             uint64_t second_rights) {
+    if (!user_fds || first_rights == 0 || second_rights == 0 ||
+        (first_rights & ~IPC_RIGHT_ALL) != 0 ||
+        (second_rights & ~IPC_RIGHT_ALL) != 0) {
+        return (uint64_t)-1;
+    }
     int idx = ipc_alloc();
     if (idx < 0) return (uint64_t)-1;
 
@@ -413,7 +418,7 @@ static uint64_t sys_ipc_pair(int *user_fds) {
     first->flags = 0;
     first->ipc_idx = idx;
     first->ipc_endpoint = 0;
-    first->ipc_rights = IPC_RIGHT_ALL;
+    first->ipc_rights = (uint8_t)first_rights;
 
     int second_fd = fd_alloc_slot();
     if (second_fd < 0) {
@@ -427,7 +432,7 @@ static uint64_t sys_ipc_pair(int *user_fds) {
     second->flags = 0;
     second->ipc_idx = idx;
     second->ipc_endpoint = 1;
-    second->ipc_rights = IPC_RIGHT_ALL;
+    second->ipc_rights = (uint8_t)second_rights;
 
     ipc_ref(idx, 0);
     ipc_ref(idx, 1);
@@ -1292,7 +1297,10 @@ uint64_t syscall_dispatch(uint64_t sp) {
     if (nr == SYS_BRK)      ret = sys_brk(a0);
     if (nr == SYS_READDIR)  ret = sys_readdir(sp, a0, (const char *)a1, a2);
     if (nr == SYS_PIPE)     ret = sys_pipe((const int *)a0);
-    if (nr == SYS_IPC_PAIR) ret = sys_ipc_pair((int *)a0);
+    if (nr == SYS_IPC_PAIR)
+        ret = sys_ipc_pair((int *)a0, IPC_RIGHT_ALL, IPC_RIGHT_ALL);
+    if (nr == SYS_IPC_PAIR_RIGHTS)
+        ret = sys_ipc_pair((int *)a0, a1, a2);
     if (nr == SYS_IPC_SEND) ret = sys_ipc_send((int)a0, (const void *)a1, a2);
     if (nr == SYS_IPC_RECV) ret = sys_ipc_recv((int)a0, (void *)a1, a2);
     if (nr == SYS_IPC_SEND_WAIT) ret = sys_ipc_send((int)a0, (const void *)a1, a2);
