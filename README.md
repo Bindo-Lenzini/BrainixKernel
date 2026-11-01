@@ -23,7 +23,7 @@ feature is complete or fully validated.
 
 - [Project overview](#project-overview)
 - [Current features](#current-features)
-- [Latest development update](#latest-development-update)
+- [Update log](#update-log)
 - [Build and run](#build-and-run)
 - [Testing and CI](#testing-and-ci)
 - [Security status and limitations](#security-status-and-limitations)
@@ -78,7 +78,7 @@ returns `0` for EOF after the peer closes, and invalid arguments return `-1`.
 page-aligned user address. The mapping remains writable and shared after
 `fork`; closing endpoints does not unmap existing mappings.
 
-## Latest development update
+## UPDATE LOG
 
 ### 2026-11-01 — IPC messages and shared pages
 
@@ -95,56 +95,13 @@ page-aligned user address. The mapping remains writable and shared after
 - User-memory faults do not consume queued messages; host and guest tests cover
   queue bounds, FIFO order, forked endpoint exchange, shared aliases, and failed
   user copies.
+- COW faults during validated kernel-to-user copies are resolved for the active
+  task, allowing IPC receives into forked user buffers.
+- Host regression tests and the headless QEMU smoke test pass with the IPC
+  implementation.
 - Receive is still nonblocking, and endpoint transfer between unrelated
   processes, capability authorization, and moving the console driver to
   user-space are not implemented yet.
-
-### 2026-10-30 — memory safety checks and CI
-
-- **User-memory access:** added user virtual-address range and overflow checks;
-  fault recovery is restricted to the active user-copy range.
-- **ELF and W^X:** strengthened ELF header and segment validation, rejected
-  writable-executable segments and invalid layouts, and applied read-only,
-  writable/non-executable, or executable/read-only user mappings.
-- **COW fork:** made cloning transactional so parent mappings are changed only
-  after a successful clone; partial child mappings and acquired page references
-  are released if cloning fails.
-- **`exec` cleanup:** failed image/stack setup now releases the temporary
-  address space and ASID without replacing the running program. Successful
-  `exec` switches to the new address space before reclaiming the old one.
-- **Pipe failure handling:** roll back pipe and file-descriptor resources when
-  returning descriptors to an invalid user pointer fails.
-- **File descriptor access modes:** reject invalid `open` flag combinations,
-  deny writable opens of the read-only initrd, and enforce read/write mode on
-  descriptors.
-- **BKFS permissions:** BKFS v3 stores a 16-bit UID, 16-bit GID, and mode in
-  each inode. `open`, `read`, `write`, truncation, `exec`, `chmod`, `chown`,
-  listing, and deletion apply credential checks. Supplementary groups are
-  inherited across `fork`, limited to 8, and can only be changed by a process
-  with `CAP_SETGID`. Mount rejects invalid, duplicate, or out-of-range block
-  pointers before exposing the filesystem. Automatic first-time formatting is
-  limited to media whose supported sectors are all zero. Existing v2 files
-  migrate as root-owned mode `0644`; migration is resumable and incompatible
-  disks are not autoformatted.
-- **Kernel UI filesystem access:** the kernel shell, editor, and file manager
-  use an explicit unprivileged UID/GID 1000 identity rather than inheriting the
-  interrupted task's credentials. The UI cannot format BKFS or bypass per-file
-  access checks through its built-in file operations.
-- **Regression tests:** host tests cover BKFS metadata, owner/group/other and
-  supplementary-group decisions, `chmod`/`chown`, protected file operations,
-  v2 migration, and interrupted migration. QEMU guest tests verify unprivileged
-  `chmod`/`chown` behavior, rejection of execution without an execute bit,
-  supplementary-group privilege checks, `O_RDONLY | O_TRUNC` rejection
-  without modifying a file, writable initrd denial, and invalid open flags,
-  alongside malformed-ELF cases, invalid user pointers, pipe rollback, COW
-  isolation, repeated `exec` and fork/wait cycles, and reaping a faulted child.
-- **Continuous integration:** CI runs the host ELF tests, builds the kernel,
-  and boots a headless QEMU smoke test with 512 MiB of guest RAM. The regular
-  graphical QEMU configuration remains at 2 GiB.
-
-The [latest CI run](https://github.com/Bindo-Lenzini/BrainixKernel/actions)
-passed the configured checks for the 2026-10-30 update. Passing them only
-confirms those tested scenarios; it is not a complete security audit.
 
 ## Build and run
 
