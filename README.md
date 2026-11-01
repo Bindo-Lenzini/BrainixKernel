@@ -80,6 +80,25 @@ page-aligned user address. The mapping remains writable and shared after
 
 ## Latest development update
 
+### 2026-11-01 — IPC messages and shared pages
+
+- Added paired bidirectional IPC endpoints with bounded FIFO message queues,
+  explicit `EAGAIN` when a queue is full or empty, and EOF after peer closure.
+- Added register-ABI system calls for creating endpoint pairs, sending messages,
+  receiving messages, and mapping an endpoint's zeroed 4 KiB shared page.
+  Endpoint descriptors retain/release channel references across `fork`,
+  `dup2`, `close`, and task teardown.
+- Shared mappings carry an explicit software PTE bit and stay writable across
+  COW fork. Mapping and address-space teardown update physical-page references;
+  closing endpoints releases the channel's owner reference without invalidating
+  existing mappings.
+- User-memory faults do not consume queued messages; host and guest tests cover
+  queue bounds, FIFO order, forked endpoint exchange, shared aliases, and failed
+  user copies.
+- Receive is still nonblocking, and endpoint transfer between unrelated
+  processes, capability authorization, and moving the console driver to
+  user-space are not implemented yet.
+
 ### 2026-10-30 — memory safety checks and CI
 
 - **User-memory access:** added user virtual-address range and overflow checks;
@@ -124,27 +143,8 @@ page-aligned user address. The mapping remains writable and shared after
   graphical QEMU configuration remains at 2 GiB.
 
 The [latest CI run](https://github.com/Bindo-Lenzini/BrainixKernel/actions)
-passed these configured checks. Passing them only confirms the tested
-scenarios; it is not a complete security audit.
-
-### 2026-11-01 — IPC messages and shared pages
-
-- Added paired bidirectional IPC endpoints with bounded FIFO message queues,
-  explicit `EAGAIN` when a queue is full or empty, and EOF after peer closure.
-- Added register-ABI system calls for creating endpoint pairs, sending messages,
-  receiving messages, and mapping an endpoint's zeroed 4 KiB shared page.
-  Endpoint descriptors retain/release channel references across `fork`,
-  `dup2`, `close`, and task teardown.
-- Shared mappings carry an explicit software PTE bit and stay writable across
-  COW fork. Mapping and address-space teardown update physical-page references;
-  closing endpoints releases the channel's owner reference without invalidating
-  existing mappings.
-- User-memory faults do not consume queued messages; host and guest tests cover
-  queue bounds, FIFO order, forked endpoint exchange, shared aliases, and failed
-  user copies.
-- Receive is still nonblocking, and endpoint transfer between unrelated
-  processes, capability authorization, and moving the console driver to
-  user-space are not implemented yet.
+passed the configured checks for the 2026-10-30 update. Passing them only
+confirms those tested scenarios; it is not a complete security audit.
 
 ## Build and run
 
