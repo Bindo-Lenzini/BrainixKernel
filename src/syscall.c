@@ -453,6 +453,28 @@ static uint64_t sys_ipc_send(int fd, const void *user_message, uint64_t len) {
     return result < 0 ? (uint64_t)(int64_t)result : (uint64_t)result;
 }
 
+static uint64_t sys_ipc_send_endpoint(int fd, const void *user_message,
+                                      uint64_t len, int transfer_fd) {
+    task_fd_t *descriptor = fd_used(fd);
+    task_fd_t *transfer = fd_used(transfer_fd);
+    if (!descriptor || descriptor->src != TFD_IPC || !transfer ||
+        transfer->src != TFD_IPC || !user_message || len == 0 ||
+        len > IPC_MESSAGE_MAX) {
+        return (uint64_t)-1;
+    }
+
+    uint8_t message[IPC_MESSAGE_MAX];
+    if (copy_from_user(message, user_message, len) < 0)
+        return (uint64_t)-1;
+    int result = ipc_send_endpoint(descriptor->ipc_idx,
+                                  descriptor->ipc_endpoint,
+                                  message, (uint32_t)len,
+                                  transfer->ipc_idx,
+                                  transfer->ipc_endpoint);
+    if (result > 0) sched_wake_blocked();
+    return result < 0 ? (uint64_t)(int64_t)result : (uint64_t)result;
+}
+
 static uint64_t sys_ipc_recv(int fd, void *user_message, uint64_t capacity) {
     task_fd_t *descriptor = fd_used(fd);
     if (!descriptor || descriptor->src != TFD_IPC || !user_message ||
@@ -468,6 +490,62 @@ static uint64_t sys_ipc_recv(int fd, void *user_message, uint64_t capacity) {
         return (uint64_t)-1;
     if (!ipc_consume(descriptor->ipc_idx, descriptor->ipc_endpoint))
         return (uint64_t)-1;
+    sched_wake_blocked();
+    return (uint64_t)result;
+}
+
+static uint64_t sys_ipc_recv_endpoint(int fd, void *user_message,
+                                      uint64_t capacity, int *user_received_fd) {
+    task_fd_t *descriptor = fd_used(fd);
+    task_t *current = sched_current();
+    if (!descriptor || descriptor->src != TFD_IPC || !user_message ||
+        !user_received_fd || capacity == 0 || capacity > IPC_MESSAGE_MAX ||
+        !current) {
+        return (uint64_t)-1;
+    }
+
+    uint8_t message[IPC_MESSAGE_MAX];
+    int transfer_idx = -1;
+    uint8_t transfer_endpoint = 0;
+    int result = ipc_peek_endpoint(descriptor->ipc_idx,
+                                   descriptor->ipc_endpoint, message,
+                                   (uint32_t)capacity, &transfer_idx,
+                                   &transfer_endpoint);
+    if (result <= 0) return (uint64_t)(int64_t)result;
+
+    int new_fd = -1;
+    if (transfer_idx >= 0) {
+        for (int candidate = FD_BASE; candidate < TASK_MAX_FDS; candidate++) {
+            if (!current->fds[candidate].used) {
+                new_fd = candidate;
+                break;
+            }
+        }
+        if (new_fd < 0) return (uint64_t)-1;
+    }
+
+    if (copy_to_user(user_message, message, (uint32_t)result) < 0 ||
+        copy_to_user(user_received_fd, &new_fd, sizeof(new_fd)) < 0) {
+        return (uint64_t)-1;
+    }
+
+    int consumed_idx = -1;
+    uint8_t consumed_endpoint = 0;
+    if (!ipc_consume_endpoint(descriptor->ipc_idx, descriptor->ipc_endpoint,
+                              &consumed_idx, &consumed_endpoint)) {
+        return (uint64_t)-1;
+    }
+    if (consumed_idx != transfer_idx ||
+        (transfer_idx >= 0 && consumed_endpoint != transfer_endpoint)) {
+        if (consumed_idx >= 0) ipc_close(consumed_idx, consumed_endpoint);
+        return (uint64_t)-1;
+    }
+    if (transfer_idx >= 0 &&
+        task_adopt_ipc_endpoint_at(current, new_fd, transfer_idx,
+                                   transfer_endpoint) < 0) {
+        ipc_close(transfer_idx, transfer_endpoint);
+        return (uint64_t)-1;
+    }
     sched_wake_blocked();
     return (uint64_t)result;
 }
@@ -1193,6 +1271,10 @@ uint64_t syscall_dispatch(uint64_t sp) {
     if (nr == SYS_IPC_RECV) ret = sys_ipc_recv((int)a0, (void *)a1, a2);
     if (nr == SYS_IPC_SEND_WAIT) ret = sys_ipc_send((int)a0, (const void *)a1, a2);
     if (nr == SYS_IPC_RECV_WAIT) ret = sys_ipc_recv((int)a0, (void *)a1, a2);
+    if (nr == SYS_IPC_SEND_ENDPOINT)
+        ret = sys_ipc_send_endpoint((int)a0, (const void *)a1, a2, (int)a3);
+    if (nr == SYS_IPC_RECV_ENDPOINT)
+        ret = sys_ipc_recv_endpoint((int)a0, (void *)a1, a2, (int *)a3);
     if (nr == SYS_DUP2)     ret = sys_dup2((int)a0, (int)a1);
     if (nr == SYS_SOCKET)   ret = sys_socket((int)a0, (int)a1, (int)a2);
     if (nr == SYS_BIND)     ret = sys_bind((int)a0, (uint16_t)a1);

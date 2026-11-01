@@ -168,5 +168,71 @@ int main(void) {
     for (int i = 0; i < IPC_MAX; i++) ipc_abort(i);
     passed &= check(active_pages() == 0,
                     "IPC channel teardown releases all backing pages");
+
+    int carrier = ipc_alloc();
+    int capability = ipc_alloc();
+    if (carrier < 0 || capability < 0) {
+        fprintf(stderr, "FAIL: endpoint-transfer fixture allocation\n");
+        return 1;
+    }
+    ipc_ref(carrier, 0);
+    ipc_ref(carrier, 1);
+    ipc_ref(capability, 0);
+    ipc_ref(capability, 1);
+    const char transfer_payload[] = "cap";
+    passed &= check(ipc_send_endpoint(carrier, 0, transfer_payload,
+                                      sizeof(transfer_payload),
+                                      capability, 0) ==
+                        (int)sizeof(transfer_payload),
+                    "message can carry an IPC endpoint reference");
+    passed &= check(ipc_send_endpoint(capability, 1, transfer_payload,
+                                      sizeof(transfer_payload), carrier, 1) ==
+                        -1,
+                    "endpoint delegation rejects reference cycles");
+    ipc_close(capability, 0);
+    int transferred_idx = -1;
+    uint8_t transferred_endpoint = 0;
+    passed &= check(ipc_peek(carrier, 1, received, sizeof(received)) == -1 &&
+                    ipc_peek_endpoint(carrier, 1, received, sizeof(received),
+                                      &transferred_idx,
+                                      &transferred_endpoint) ==
+                        (int)sizeof(transfer_payload) &&
+                    transferred_idx == capability &&
+                    transferred_endpoint == 0 &&
+                    memcmp(received, transfer_payload,
+                           sizeof(transfer_payload)) == 0,
+                    "plain receive preserves messages carrying capabilities");
+    passed &= check(ipc_consume_endpoint(carrier, 1, &transferred_idx,
+                                         &transferred_endpoint) &&
+                    transferred_idx == capability &&
+                    transferred_endpoint == 0 &&
+                    ipc_send(capability, transferred_endpoint, request,
+                             sizeof(request)) == (int)sizeof(request),
+                    "receiving endpoint adopts the queued reference");
+    ipc_close(capability, 0);
+    ipc_close(capability, 1);
+    ipc_close(carrier, 0);
+    ipc_close(carrier, 1);
+
+    int cleanup_carrier = ipc_alloc();
+    int cleanup_capability = ipc_alloc();
+    if (cleanup_carrier < 0 || cleanup_capability < 0) {
+        fprintf(stderr, "FAIL: endpoint cleanup fixture allocation\n");
+        return 1;
+    }
+    ipc_ref(cleanup_carrier, 0);
+    ipc_ref(cleanup_carrier, 1);
+    ipc_ref(cleanup_capability, 0);
+    ipc_ref(cleanup_capability, 1);
+    passed &= check(ipc_send_endpoint(cleanup_carrier, 0, request,
+                                      sizeof(request), cleanup_capability, 0) ==
+                        (int)sizeof(request),
+                    "queued endpoint remains referenced until consumed");
+    ipc_close(cleanup_capability, 0);
+    ipc_close(cleanup_capability, 1);
+    ipc_close(cleanup_carrier, 0);
+    ipc_close(cleanup_carrier, 1);
+    passed &= check(active_pages() == 0,
+                    "discarding a channel releases queued endpoint references");
     return passed ? 0 : 1;
 }

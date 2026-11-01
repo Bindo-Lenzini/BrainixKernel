@@ -167,15 +167,20 @@ int main(int argc, char **argv) {
     }
 
     int ipc_bad_fds = 0;
-    int ipc_fds[2];
+    int ipc_fds[2] = {-1, -1};
+    int transfer_fds[2] = {-1, -1};
     for (int i = 0; i < 16; i++) {
         if (ipc_pair((int *)(uintptr_t)0x20000000ULL) == -1)
             ipc_bad_fds++;
     }
     int pair_result = ipc_pair(ipc_fds);
-    int ipc_ok = ipc_bad_fds == 16 && pair_result == 0;
+    int transfer_pair_result = ipc_pair(transfer_fds);
+    int ipc_ok = ipc_bad_fds == 16 && pair_result == 0 &&
+                 transfer_pair_result == 0;
     if (ipc_bad_fds != 16) puts("[ipc] invalid-output rollback failed");
     if (pair_result != 0) puts("[ipc] endpoint pair creation failed");
+    if (transfer_pair_result != 0)
+        puts("[ipc] transfer endpoint pair creation failed");
     if (ipc_ok) {
         ipc_ok = ipc_map(ipc_fds[0],
                          (void *)(uintptr_t)IPC_SHARED_TEST_VA) == 0 &&
@@ -187,6 +192,8 @@ int main(int argc, char **argv) {
         int ipc_pid = fork();
         if (ipc_pid == 0) {
             close(ipc_fds[0]);
+            close(transfer_fds[0]);
+            close(transfer_fds[1]);
             volatile uint8_t *shared =
                 (volatile uint8_t *)(uintptr_t)IPC_SHARED_TEST_VA;
             volatile uint8_t *alias =
@@ -203,6 +210,41 @@ int main(int argc, char **argv) {
             }
             alias[0] = 0x43;
             shared[1] = 2;
+
+            int received_endpoint = -1;
+            char transfer_message[16];
+            long invalid_fd_output = IPC_EAGAIN;
+            for (int i = 0; i < 10000 &&
+                 invalid_fd_output == IPC_EAGAIN; i++) {
+                invalid_fd_output = ipc_recv_endpoint(
+                    ipc_fds[1], transfer_message, sizeof(transfer_message),
+                    (int *)(uintptr_t)0x20000000ULL);
+                if (invalid_fd_output == IPC_EAGAIN) yield();
+            }
+            long plain_received = IPC_EAGAIN;
+            for (int i = 0; i < 10000 &&
+                 plain_received == IPC_EAGAIN; i++) {
+                plain_received = ipc_recv(ipc_fds[1], transfer_message,
+                                          sizeof(transfer_message));
+                if (plain_received == IPC_EAGAIN) yield();
+            }
+            long transfer_received = IPC_EAGAIN;
+            for (int i = 0; i < 10000 &&
+                 transfer_received == IPC_EAGAIN; i++) {
+                transfer_received = ipc_recv_endpoint(
+                    ipc_fds[1], transfer_message, sizeof(transfer_message),
+                    &received_endpoint);
+                if (transfer_received == IPC_EAGAIN) yield();
+            }
+            if (invalid_fd_output != -1 || plain_received != -1 ||
+                transfer_received != 6 ||
+                memcmp(transfer_message, "grant", 6) != 0 ||
+                received_endpoint < 0 ||
+                ipc_send(received_endpoint, "granted", 8) != 8) {
+                puts("[ipc child] endpoint delegation failed");
+                exit(33);
+            }
+            close(received_endpoint);
 
             char request[IPC_MESSAGE_MAX];
             long received = IPC_EAGAIN;
@@ -228,6 +270,23 @@ int main(int argc, char **argv) {
             while (shared[1] != 2) yield();
             ipc_ok = shared[0] == 0x43;
             if (!ipc_ok) puts("[ipc] shared alias writes were not visible");
+
+            long transfer_sent = ipc_send_endpoint(
+                ipc_fds[0], "grant", 6, transfer_fds[1]);
+            close(transfer_fds[1]);
+            char transfer_response[16];
+            long transfer_reply = IPC_EAGAIN;
+            for (int i = 0; i < 10000 &&
+                 transfer_reply == IPC_EAGAIN; i++) {
+                transfer_reply = ipc_recv(transfer_fds[0], transfer_response,
+                                          sizeof(transfer_response));
+                if (transfer_reply == IPC_EAGAIN) yield();
+            }
+            ipc_ok = ipc_ok && transfer_sent == 6 &&
+                     transfer_reply == 8 &&
+                     memcmp(transfer_response, "granted", 8) == 0;
+            if (!ipc_ok) puts("[ipc] delegated endpoint was not usable");
+            close(transfer_fds[0]);
 
             long sent = ipc_send(ipc_fds[0], "hello", 6);
             ipc_ok = ipc_ok && sent == 6;
@@ -265,10 +324,12 @@ int main(int argc, char **argv) {
             ipc_ok = 0;
             close(ipc_fds[0]);
             close(ipc_fds[1]);
+            close(transfer_fds[0]);
+            close(transfer_fds[1]);
         }
     }
     if (ipc_ok) {
-        puts("[ipc] shared-page alias, fork mapping, and message exchange passed");
+        puts("[ipc] shared-page alias, IPC, and endpoint delegation passed");
     } else {
         puts("[ipc] endpoint exchange or rollback failed");
         failures++;

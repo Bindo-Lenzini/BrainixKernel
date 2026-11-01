@@ -93,19 +93,8 @@ void task_fd_retain(task_fd_t *fd) {
     if (fd->src == TFD_IPC) ipc_ref(fd->ipc_idx, fd->ipc_endpoint);
 }
 
-int task_install_ipc_endpoint(task_t *task, int ipc_idx, uint8_t endpoint) {
-    if (!task || endpoint > 1 || !ipc_shared_page(ipc_idx)) return -1;
-
-    int fd = -1;
-    for (int i = 3; i < TASK_MAX_FDS; i++) {
-        if (!task->fds[i].used) {
-            fd = i;
-            break;
-        }
-    }
-    if (fd < 0) return -1;
-
-    task_fd_t *descriptor = &task->fds[fd];
+static void task_set_ipc_descriptor(task_fd_t *descriptor, int ipc_idx,
+                                    uint8_t endpoint) {
     descriptor->used = 1;
     descriptor->src = TFD_IPC;
     descriptor->flags = 0;
@@ -117,7 +106,24 @@ int task_install_ipc_endpoint(task_t *task, int ipc_idx, uint8_t endpoint) {
     descriptor->tcp_idx = -1;
     descriptor->ipc_idx = ipc_idx;
     descriptor->ipc_endpoint = endpoint;
-    ipc_ref(ipc_idx, endpoint);
+}
+
+int task_install_ipc_endpoint(task_t *task, int ipc_idx, uint8_t endpoint) {
+    if (!task || endpoint > 1 || !ipc_shared_page(ipc_idx)) return -1;
+    for (int fd = 3; fd < TASK_MAX_FDS; fd++) {
+        if (task->fds[fd].used) continue;
+        task_set_ipc_descriptor(&task->fds[fd], ipc_idx, endpoint);
+        ipc_ref(ipc_idx, endpoint);
+        return fd;
+    }
+    return -1;
+}
+
+int task_adopt_ipc_endpoint_at(task_t *task, int fd, int ipc_idx,
+                               uint8_t endpoint) {
+    if (!task || fd < 3 || fd >= TASK_MAX_FDS || endpoint > 1 ||
+        task->fds[fd].used || !ipc_shared_page(ipc_idx)) return -1;
+    task_set_ipc_descriptor(&task->fds[fd], ipc_idx, endpoint);
     return fd;
 }
 

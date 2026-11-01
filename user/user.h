@@ -28,6 +28,8 @@
 #define SYS_IPC_MAP  31
 #define SYS_IPC_SEND_WAIT 32
 #define SYS_IPC_RECV_WAIT 33
+#define SYS_IPC_SEND_ENDPOINT 34
+#define SYS_IPC_RECV_ENDPOINT 35
 #define IPC_EAGAIN   (-2)
 #define IPC_MESSAGE_MAX 256
 #define IPC_SHARED_PAGE_SIZE 4096
@@ -74,6 +76,10 @@ long ipc_send(int fd, const void *message, unsigned long len);
 long ipc_recv(int fd, void *message, unsigned long capacity);
 long ipc_send_wait(int fd, const void *message, unsigned long len);
 long ipc_recv_wait(int fd, void *message, unsigned long capacity);
+long ipc_send_endpoint(int fd, const void *message, unsigned long len,
+                       int transfer_fd);
+long ipc_recv_endpoint(int fd, void *message, unsigned long capacity,
+                       int *received_fd);
 int  ipc_map(int fd, void *address);
 int  dup2  (int oldfd, int newfd);
 int  socket(int domain, int type, int protocol);

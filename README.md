@@ -58,9 +58,10 @@ compliance, complete functionality, or comprehensive testing.
 - User-memory copy helpers with user-address range and overflow checks.
 - Bounded message channels with paired file-descriptor endpoints, nonblocking
   calls, and blocking send/receive variants; endpoints are inherited on `fork`
-  and messages are copied through validated user-memory helpers. An endpoint
-  can also map its zeroed shared page at a caller-selected page-aligned address;
-  shared writable mappings remain shared across COW `fork`.
+  and messages are copied through validated user-memory helpers. Processes can
+  explicitly delegate an IPC endpoint with a message, creating a recipient fd.
+  An endpoint can also map its zeroed shared page at a caller-selected
+  page-aligned address; shared writable mappings remain shared across COW `fork`.
 - User tasks default to UID/GID `1000` and empty effective/permitted capability
   masks; forked tasks inherit credentials.
 - A small userland including a shell, basic utilities, network examples, and a
@@ -81,6 +82,15 @@ per receiving endpoint, with a 256-byte maximum per message. The regular send
 and receive calls are nonblocking: `IPC_EAGAIN` (`-2`) means the queue is full
 or empty; blocking variants sleep and retry when queue state changes. Receive
 returns `0` for EOF after the peer closes, and invalid arguments return `-1`.
+`ipc_send_endpoint(fd, message, len, transfer_fd)` explicitly queues a
+reference to an IPC endpoint along with the message; the sender keeps its fd.
+The transferred endpoint must belong to a different channel than the transport,
+and queued delegation cycles are rejected.
+`ipc_recv_endpoint(fd, message, capacity, &received_fd)` installs the delegated
+endpoint as a new fd, or writes `-1` when the message carries no endpoint.
+Ordinary receive refuses an endpoint-bearing message without consuming it.
+Queued endpoint references are released if their message is discarded with its
+channel.
 `ipc_map` maps the channel's zero-initialized 4 KiB shared page at a free,
 page-aligned user address. The mapping remains writable and shared after
 `fork`; closing endpoints does not unmap existing mappings.
@@ -113,13 +123,16 @@ page-aligned user address. The mapping remains writable and shared after
   services use these wakeups instead of polling.
 - Split console input and output into separate user tasks so the input service
   can wait for UART interrupts while the output service blocks on IPC.
+- Added explicit IPC endpoint delegation with messages. The sender retains its
+  descriptor, the receiver adopts a new fd, and ordinary receive preserves a
+  queued capability rather than silently discarding it.
 - Kept UART MMIO, interrupt handling, and receive buffering in the kernel HAL.
   The console service owns routing, but does not directly drive UART hardware.
 - The headless QEMU smoke test now requires the console-server ready marker and
   verifies the shell's test command through the routed input/output path.
 - Host regression tests, the kernel build, and the headless QEMU smoke test pass.
-- Endpoint transfer between unrelated processes, capability authorization,
-  and moving the physical UART driver to user-space remain future work.
+- Broader capability authorization and moving the physical UART driver to
+  user-space remain future work.
 
 ## Build and run
 
@@ -185,8 +198,8 @@ snapshot; guest disk writes are not persisted to `disk.img`.
 
 | Check | What it covers |
 | --- | --- |
-| `make host-test` | ELF parser cases, BKFS permissions, malformed block-pointer rejection, blank-disk detection and v2 migration, scheduler reaper adoption/fallback and dead-orphan teardown, IPC queue and shared-page lifetime semantics, and COW allocation-failure rollback/shared-mapping behavior |
-| `make smoke` | QEMU boot, console-server startup and shell input/output routed over IPC, kernel self-tests, credentials, BKFS user-file creation, `chmod`/`chown`, execute-bit denial, supplementary-group pointer/range/privilege checks, initrd write denial, invalid open flags, user-pointer handling, pipe and IPC rollback, shared-page aliases across `fork`, forked IPC message exchange, COW isolation, 260 repeated `exec` and fork/wait cycles, and a faulted-child teardown check |
+| `make host-test` | ELF parser cases, BKFS permissions, malformed block-pointer rejection, blank-disk detection and v2 migration, scheduler reaper adoption/fallback and dead-orphan teardown, IPC queue, endpoint delegation/cycle prevention and shared-page lifetime semantics, and COW allocation-failure rollback/shared-mapping behavior |
+| `make smoke` | QEMU boot, console-server startup and shell input/output routed over IPC, kernel self-tests, credentials, BKFS user-file creation, `chmod`/`chown`, execute-bit denial, supplementary-group pointer/range/privilege checks, initrd write denial, invalid open flags, user-pointer handling, pipe and IPC rollback, shared-page aliases across `fork`, endpoint delegation between forked processes, IPC message exchange, COW isolation, 260 repeated `exec` and fork/wait cycles, and a faulted-child teardown check |
 | GitHub Actions | Host tests, kernel build, and the headless QEMU smoke target |
 
 Tests cover selected regression scenarios. They do not prove the absence of
@@ -225,7 +238,7 @@ Do not treat passing tests or this feature list as a security guarantee.
 
 Near-term development priorities:
 
-1. Add controlled endpoint transfer between independent processes.
+1. Add capability-aware service authorization and endpoint policies.
 2. Audit syscall boundaries, authorization checks, and partial-I/O behavior.
 3. Add malformed-input, allocation-failure, and fuzz tests for BKFS, networking,
    and device interfaces.

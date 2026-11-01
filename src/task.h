@@ -96,6 +96,8 @@ task_t *task_fork_clone(task_t *parent, uint64_t new_l0, uint16_t new_asid,
 void task_fd_retain(task_fd_t *fd);
 void task_fd_release(task_fd_t *fd);
 int task_install_ipc_endpoint(task_t *task, int ipc_idx, uint8_t endpoint);
+int task_adopt_ipc_endpoint_at(task_t *task, int fd, int ipc_idx,
+                               uint8_t endpoint);
 void task_destroy(task_t *t);
 
 #endif
