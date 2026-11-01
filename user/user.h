@@ -31,6 +31,10 @@
 #define SYS_IPC_SEND_ENDPOINT 34
 #define SYS_IPC_RECV_ENDPOINT 35
 #define SYS_IPC_PAIR_RIGHTS 36
+#define SYS_FD_RESTRICT 37
+#define FD_RIGHT_READ   0x01
+#define FD_RIGHT_WRITE  0x02
+#define FD_RIGHT_ALL    0x03
 #define IPC_EAGAIN   (-2)
 #define IPC_MESSAGE_MAX 256
 #define IPC_SHARED_PAGE_SIZE 4096
@@ -66,6 +70,7 @@ long read (int fd, void *buf, unsigned long n);
 void exit  (int code);
 int  open  (const char *name, int flags);
 int  close (int fd);
+int  fd_restrict(int fd, unsigned int rights);
 int  chmod (const char *path, unsigned int mode);
 int  chown (const char *path, int uid, int gid);
 int  getgroups(int size, unsigned int groups[]);

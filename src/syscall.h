@@ -41,6 +41,7 @@
 #define SYS_IPC_SEND_ENDPOINT 34
 #define SYS_IPC_RECV_ENDPOINT 35
 #define SYS_IPC_PAIR_RIGHTS 36
+#define SYS_FD_RESTRICT 37
 
 void syscall_console_configure(int ipc_idx);
 uint64_t syscall_dispatch(uint64_t sp);

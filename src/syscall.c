@@ -68,10 +68,7 @@ static void fd_clear_slot(task_fd_t *f) {
     f->ipc_idx    = -1;
     f->ipc_endpoint = 0;
     f->ipc_rights = 0;
-}
-
-static int fd_access_mode(const task_fd_t *f) {
-    return f->flags & (BKFS_O_WRONLY | BKFS_O_RDWR);
+    f->file_rights = 0;
 }
 
 static int bkfs_access_allowed(task_t *task, int inode, int want) {
@@ -130,7 +127,7 @@ static uint64_t sys_write(int fd, const void *user_buf, size_t len) {
     // BKFS-файл (offset всегда 0, перезапись целиком).
     if (f->src == TFD_BKFS) {
         task_t *cur = sched_current();
-        if (fd_access_mode(f) == BKFS_O_RDONLY ||
+        if (!(f->file_rights & FD_RIGHT_WRITE) ||
             !bkfs_access_allowed(cur, f->bkfs_inode, CRED_W)) {
             return (uint64_t)-1;
         }
@@ -208,7 +205,7 @@ static uint64_t sys_read(int fd, void *user_buf, size_t len) {
     if (!f) return (uint64_t)-1;
 
     if (f->src == TFD_INITRD) {
-        if (fd_access_mode(f) == BKFS_O_WRONLY) return (uint64_t)-1;
+        if (!(f->file_rights & FD_RIGHT_READ)) return (uint64_t)-1;
         const initrd_file_t *file = (const initrd_file_t *)f->file;
         if (len > KIO_BUF) len = KIO_BUF;
         uint8_t kbuf[KIO_BUF];
@@ -223,7 +220,7 @@ static uint64_t sys_read(int fd, void *user_buf, size_t len) {
 
     if (f->src == TFD_BKFS) {
         task_t *cur = sched_current();
-        if (fd_access_mode(f) == BKFS_O_WRONLY ||
+        if (!(f->file_rights & FD_RIGHT_READ) ||
             !bkfs_access_allowed(cur, f->bkfs_inode, CRED_R)) {
             return (uint64_t)-1;
         }
@@ -317,6 +314,9 @@ static uint64_t sys_open(const char *user_name, int flags) {
             f->file       = 0;
             f->bkfs_inode = inode;
             f->pipe_idx   = -1;
+            f->file_rights =
+                (access_mode != BKFS_O_WRONLY ? FD_RIGHT_READ : 0) |
+                (writable ? FD_RIGHT_WRITE : 0);
             return (uint64_t)fd;
         }
     }
@@ -331,6 +331,7 @@ static uint64_t sys_open(const char *user_name, int flags) {
         f->file       = file;
         f->bkfs_inode = -1;
         f->pipe_idx   = -1;
+        f->file_rights = FD_RIGHT_READ;
         return (uint64_t)fd;
     }
 
@@ -341,6 +342,18 @@ static uint64_t sys_close(int fd) {
     task_fd_t *f = fd_used(fd);
     if (!f) return (uint64_t)-1;
     task_fd_release(f);
+    return 0;
+}
+
+static uint64_t sys_fd_restrict(int fd, uint64_t rights) {
+    task_fd_t *descriptor = fd_used(fd);
+    if (!descriptor ||
+        (descriptor->src != TFD_BKFS && descriptor->src != TFD_INITRD) ||
+        (rights & ~FD_RIGHT_ALL) != 0 ||
+        (rights & ~descriptor->file_rights) != 0) {
+        return (uint64_t)-1;
+    }
+    descriptor->file_rights = (uint8_t)rights;
     return 0;
 }
 
@@ -419,6 +432,7 @@ static uint64_t sys_ipc_pair(int *user_fds, uint64_t first_rights,
     first->ipc_idx = idx;
     first->ipc_endpoint = 0;
     first->ipc_rights = (uint8_t)first_rights;
+    first->file_rights = 0;
 
     int second_fd = fd_alloc_slot();
     if (second_fd < 0) {
@@ -433,6 +447,7 @@ static uint64_t sys_ipc_pair(int *user_fds, uint64_t first_rights,
     second->ipc_idx = idx;
     second->ipc_endpoint = 1;
     second->ipc_rights = (uint8_t)second_rights;
+    second->file_rights = 0;
 
     ipc_ref(idx, 0);
     ipc_ref(idx, 1);
@@ -1294,6 +1309,7 @@ uint64_t syscall_dispatch(uint64_t sp) {
     if (nr == SYS_READ)     ret = sys_read((int)a0, (void *)a1, (size_t)a2);
     if (nr == SYS_OPEN)     ret = sys_open((const char *)a0, (int)a1);
     if (nr == SYS_CLOSE)    ret = sys_close((int)a0);
+    if (nr == SYS_FD_RESTRICT) ret = sys_fd_restrict((int)a0, a1);
     if (nr == SYS_BRK)      ret = sys_brk(a0);
     if (nr == SYS_READDIR)  ret = sys_readdir(sp, a0, (const char *)a1, a2);
     if (nr == SYS_PIPE)     ret = sys_pipe((const int *)a0);

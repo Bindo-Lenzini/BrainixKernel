@@ -25,6 +25,10 @@
 #define TFD_TCP         6
 #define TFD_IPC         7
 
+#define FD_RIGHT_READ   0x01
+#define FD_RIGHT_WRITE  0x02
+#define FD_RIGHT_ALL    (FD_RIGHT_READ | FD_RIGHT_WRITE)
+
 typedef struct {
     int      used;
     int      src;         // TFD_*
@@ -50,6 +54,7 @@ typedef struct {
     int      ipc_idx;
     uint8_t  ipc_endpoint;
     uint8_t  ipc_rights;
+    uint8_t  file_rights;
 } task_fd_t;
 
 typedef enum {

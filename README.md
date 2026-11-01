@@ -64,6 +64,9 @@ compliance, complete functionality, or comprehensive testing.
   page-aligned address; shared writable mappings remain shared across COW `fork`.
 - User tasks default to UID/GID `1000` and empty effective/permitted capability
   masks; forked tasks inherit credentials.
+- Initrd and BKFS file descriptors carry explicit read/write rights derived
+  from `open` and can be further restricted with `fd_restrict`; `dup2` and
+  `fork` preserve the reduced rights.
 - A small userland including a shell, basic utilities, network examples, and a
   user-space console-routing service connected to the shell over IPC.
 - Experimental virtual-device, storage, network, and graphical desktop support.
@@ -111,6 +114,14 @@ channel.
 page-aligned user address. The mapping remains writable and shared after
 `fork`; closing endpoints does not unmap existing mappings.
 
+File descriptors returned by `open` carry `FD_RIGHT_READ` and/or
+`FD_RIGHT_WRITE`, constrained by the requested open mode and file permissions.
+`fd_restrict(fd, rights)` can remove rights from an initrd or BKFS descriptor,
+including reducing it to no access; it rejects unknown rights, non-file
+descriptors, and attempts to add authority. Duplicating or forking a restricted
+descriptor preserves its reduced rights. File descriptor delegation between
+processes is not implemented yet.
+
 ## UPDATE LOG
 
 ### 2026-11-01 — IPC, shared pages, and user-space console services
@@ -126,6 +137,9 @@ page-aligned user address. The mapping remains writable and shared after
   kernel rejects unauthorized operations and rights escalation. Added
   `ipc_pair_rights` so services can create endpoints with explicit rights
   policies instead of starting from full-authority descriptors.
+- Added explicit read/write rights to opened initrd and BKFS descriptors.
+  `fd_restrict` only permits attenuation, and `dup2`/`fork` preserve reduced
+  rights; guest tests check denied reads/writes and reject rights restoration.
 - Shared mappings carry an explicit software PTE bit and stay writable across
   COW fork. Mapping and address-space teardown update physical-page references;
   closing endpoints releases the channel's owner reference without invalidating
@@ -222,7 +236,7 @@ snapshot; guest disk writes are not persisted to `disk.img`.
 | Check | What it covers |
 | --- | --- |
 | `make host-test` | ELF parser cases, BKFS permissions, malformed block-pointer rejection, blank-disk detection and v2 migration, scheduler reaper adoption/fallback and dead-orphan teardown, IPC queue, endpoint delegation/cycle prevention and shared-page lifetime semantics, and COW allocation-failure rollback/shared-mapping behavior |
-| `make smoke` | QEMU boot, console-server startup and shell input/output routed over IPC, kernel self-tests, credentials, BKFS user-file creation, `chmod`/`chown`, execute-bit denial, supplementary-group pointer/range/privilege checks, initrd write denial, invalid open flags, user-pointer handling, pipe and IPC rollback, endpoint creation-policy validation, restricted endpoint operations and delegation, shared-page aliases across `fork`, IPC message exchange, COW isolation, 260 repeated `exec` and fork/wait cycles, and a faulted-child teardown check |
+| `make smoke` | QEMU boot, console-server startup and shell input/output routed over IPC, kernel self-tests, credentials, BKFS user-file creation, `chmod`/`chown`, execute-bit denial, supplementary-group pointer/range/privilege checks, initrd write denial, invalid open flags, file descriptor rights attenuation across `dup2`/`fork`, user-pointer handling, pipe and IPC rollback, endpoint creation-policy validation, restricted endpoint operations and delegation, shared-page aliases across `fork`, IPC message exchange, COW isolation, 260 repeated `exec` and fork/wait cycles, and a faulted-child teardown check |
 | GitHub Actions | Host tests, kernel build, and the headless QEMU smoke target |
 
 Tests cover selected regression scenarios. They do not prove the absence of

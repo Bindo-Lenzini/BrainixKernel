@@ -6,6 +6,7 @@
 .global exit
 .global open
 .global close
+.global fd_restrict
 .global yield
 .global brk
 .global exec
@@ -57,6 +58,11 @@ open:
 
 close:
     mov x8, #5
+    svc #0
+    ret
+
+fd_restrict:
+    mov x8, #37
     svc #0
     ret
 

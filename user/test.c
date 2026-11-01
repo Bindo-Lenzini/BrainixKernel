@@ -28,13 +28,22 @@ int main(int argc, char **argv) {
     int readonly_fd = open("hello.txt", O_RDONLY);
     if (readonly_fd >= 0) {
         char byte;
-        if (write(readonly_fd, "x", 1) == -1 &&
-            read(readonly_fd, &byte, 1) == 1) {
-            puts("[auth] read-only initrd descriptor remains readable");
+        int restricted_dup = -1;
+        int restrict_ok = write(readonly_fd, "x", 1) == -1 &&
+                          read(readonly_fd, &byte, 1) == 1 &&
+                          fd_restrict(readonly_fd, 0) == 0 &&
+                          fd_restrict(readonly_fd, FD_RIGHT_READ) == -1;
+        if (restrict_ok) restricted_dup = dup2(readonly_fd, 15);
+        if (restrict_ok && restricted_dup == 15 &&
+            read(readonly_fd, &byte, 1) == -1 &&
+            read(restricted_dup, &byte, 1) == -1 &&
+            fd_restrict(restricted_dup, FD_RIGHT_READ) == -1) {
+            puts("[auth] file descriptor rights only attenuate and dup2 preserves them");
         } else {
-            puts("[auth] read-only initrd descriptor behavior failed");
+            puts("[auth] file descriptor attenuation or dup2 failed");
             failures++;
         }
+        if (restricted_dup >= 0) close(restricted_dup);
         close(readonly_fd);
     } else {
         puts("[auth] initrd read-only open failed");
@@ -84,7 +93,27 @@ int main(int argc, char **argv) {
         int write_allowed = open("auth-user.tmp", O_WRONLY);
         if (write_allowed >= 0) close(write_allowed);
         int chmod_restore = chmod("auth-user.tmp", 0640);
-        owned_fd = open("auth-user.tmp", O_RDONLY);
+        owned_fd = open("auth-user.tmp", O_RDWR);
+        int rights_restricted = owned_fd >= 0 &&
+            fd_restrict(owned_fd, FD_RIGHT_READ) == 0 &&
+            fd_restrict(owned_fd, FD_RIGHT_ALL) == -1;
+        int rights_dup = rights_restricted ? dup2(owned_fd, 15) : -1;
+        int rights_pid = rights_dup >= 0 ? fork() : -1;
+        int inherited_rights_ok = 0;
+        if (rights_pid == 0) {
+            char child_byte = 0;
+            exit(fd_restrict(rights_dup, FD_RIGHT_ALL) == -1 &&
+                 write(rights_dup, "x", 1) == -1 &&
+                 read(rights_dup, &child_byte, 1) == 1 &&
+                 child_byte == 'u' ? 0 : 1);
+        } else if (rights_pid > 0) {
+            int child_status = IPC_EAGAIN;
+            while (child_status == IPC_EAGAIN) {
+                child_status = wait(rights_pid);
+                if (child_status == IPC_EAGAIN) yield();
+            }
+            inherited_rights_ok = child_status == 0;
+        }
         char owned_byte = 0;
         if (wrote && chmod_owner == 0 && chmod_group == 0 &&
             read_denied && write_allowed >= 0 && chmod_restore == 0 &&
@@ -92,14 +121,16 @@ int main(int argc, char **argv) {
             chown("auth-user.tmp", 2000, -1) == -1 &&
             chown("auth-user.tmp", 65536, -1) == -1 &&
             chown("auth-user.tmp", -1, 1000) == 0 &&
-            owned_fd >= 0 &&
+            owned_fd >= 0 && rights_restricted && rights_dup == 15 &&
+            rights_pid > 0 && inherited_rights_ok &&
             write(owned_fd, "x", 1) == -1 &&
             read(owned_fd, &owned_byte, 1) == 1 && owned_byte == 'u') {
-            puts("[auth] BKFS chmod/chown and descriptor permissions enforced");
+            puts("[auth] BKFS permissions and attenuated fd rights survive dup2/fork");
         } else {
-            puts("[auth] BKFS chmod/chown or descriptor permissions failed");
+            puts("[auth] BKFS permissions or fd-right attenuation failed");
             failures++;
         }
+        if (rights_dup >= 0) close(rights_dup);
         if (owned_fd >= 0) close(owned_fd);
         if (exec("auth-user.tmp", 0) == -1) {
             puts("[auth] non-executable BKFS file rejected by exec");
@@ -185,6 +216,10 @@ int main(int argc, char **argv) {
     int ipc_ok = ipc_bad_fds == 16 && invalid_rights_rejected &&
                  pair_result == 0 &&
                  transfer_pair_result == 0;
+    if (ipc_ok && fd_restrict(ipc_fds[0], 0) != -1) {
+        ipc_ok = 0;
+        puts("[ipc] file-rights restriction accepted a non-file descriptor");
+    }
     if (!invalid_rights_rejected)
         puts("[ipc] invalid endpoint-rights policy was accepted");
     if (ipc_bad_fds != 16) puts("[ipc] invalid-output rollback failed");
