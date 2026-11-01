@@ -998,10 +998,12 @@ void kernel_main(uint64_t dtb) {
     // User-space shell: sh.elf. Запускаем как U-shell (stdin/stdout через UART).
     const initrd_file_t *elf_file = initrd_find("sh.elf");
     const initrd_file_t *console_file = initrd_find("console.elf");
+    const initrd_file_t *vfs_file = initrd_find("vfsd.elf");
     task_t *console_input_task = 0;
     task_t *console_output_task = 0;
+    task_t *vfs_service_task = 0;
     task_t *ue = 0;
-    if (console_file && elf_file) {
+    if (console_file && elf_file && vfs_file) {
         const char *input_args[] = {"console", "input"};
         const char *output_args[] = {"console", "output"};
         console_input_task = task_create_from_elf_ex(
@@ -1023,6 +1025,16 @@ void kernel_main(uint64_t dtb) {
         console_input_task->console_server = 1;
         console_output_task->console_server = 1;
 
+        vfs_service_task = task_create_from_elf(
+            "vfsd", vfs_file->data, vfs_file->size);
+        if (!vfs_service_task)
+            panic("failed to create VFS service task");
+        int vfs_ipc = ipc_alloc();
+        if (vfs_ipc < 0) panic("failed to allocate VFS IPC channel");
+        if (task_install_ipc_endpoint(vfs_service_task, vfs_ipc, 0,
+                                      IPC_RIGHT_RECEIVE) != 3)
+            panic("failed to install VFS service endpoint");
+
         uart_puts("  [elf] sh.elf size=");
         uart_putu(elf_file->size);
         uart_puts(" entry-loading...\n");
@@ -1042,13 +1054,18 @@ void kernel_main(uint64_t dtb) {
                 ue, console_ipc, 1,
                 IPC_RIGHT_SEND | IPC_RIGHT_RECEIVE);
             if (shell_fd < 0) panic("failed to install shell IPC endpoint");
+            int vfs_fd = task_install_ipc_endpoint(
+                ue, vfs_ipc, 1, IPC_RIGHT_SEND | IPC_RIGHT_DELEGATE);
+            if (vfs_fd != 4)
+                panic("failed to install VFS client endpoint");
             syscall_console_configure(console_ipc);
         }
     } else {
-        panic("console.elf or sh.elf not found in initrd");
+        panic("console.elf, sh.elf, or vfsd.elf missing from initrd");
     }
 
     sched_add(a);
+    sched_add(vfs_service_task);
     sched_add(console_input_task);
     sched_add(console_output_task);
     sched_add(ue);

@@ -5,7 +5,7 @@
 
 #include <stdint.h>
 
-#define INITRD_MAX_FILES 16
+#define INITRD_MAX_FILES 24
 
 typedef struct {
     char           name[32];

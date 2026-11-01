@@ -68,7 +68,8 @@ compliance, complete functionality, or comprehensive testing.
   from `open` and can be further restricted with `fd_restrict`; `dup2` and
   `fork` preserve the reduced rights.
 - A small userland including a shell, basic utilities, network examples, and a
-  user-space console-routing service connected to the shell over IPC.
+  user-space console-routing service and experimental VFS open broker connected
+  to clients over IPC.
 - Experimental virtual-device, storage, network, and graphical desktop support.
 
 The console service routes terminal input to the shell and shell output to the
@@ -129,6 +130,14 @@ formatting BKFS while any inode is pinned returns `EBUSY`, preventing a
 transferred capability from aliasing a reused inode. BKFS reads and writes
 continue to enforce the receiver's current file permissions.
 
+The experimental `vfsd.elf` service accepts `vfs_open(path, flags)` requests
+from the shell and its descendants and returns an attenuated file descriptor
+capability over a per-request IPC endpoint. This exercises user-space path
+brokerage and capability transfer for both initrd and BKFS files. It is not yet
+the system-wide `open` implementation: ordinary `open`, reads, writes,
+directory operations, and BKFS/block-device access still use kernel code. The
+service currently runs with the default unprivileged user credentials.
+
 ## UPDATE LOG
 
 ### 2026-11-01 — IPC, shared pages, and user-space console services
@@ -153,6 +162,11 @@ continue to enforce the receiver's current file permissions.
   leave the queued capability intact. BKFS descriptors now transfer with
   selected rights and offsets; open descriptors and queued transfers pin inodes,
   so deletion and formatting fail with `EBUSY` until all references are gone.
+- Added an experimental user-space VFS open broker. `vfs_open` sends a path and
+  flags over IPC with a per-request reply endpoint; `vfsd.elf` opens the file
+  using the existing kernel backend and returns an attenuated initrd or BKFS
+  descriptor capability. Guest tests cover both filesystems; regular `open`
+  and filesystem I/O remain kernel-backed.
 - Shared mappings carry an explicit software PTE bit and stay writable across
   COW fork. Mapping and address-space teardown update physical-page references;
   closing endpoints releases the channel's owner reference without invalidating

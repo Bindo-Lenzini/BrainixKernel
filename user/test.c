@@ -1,5 +1,6 @@
 #include "user.h"
 #include "libc.h"
+#include "vfs.h"
 
 #define IPC_SHARED_TEST_VA 0x30000000ULL
 #define IPC_SHARED_ALIAS_VA (IPC_SHARED_TEST_VA + IPC_SHARED_PAGE_SIZE)
@@ -22,6 +23,41 @@ int main(int argc, char **argv) {
         puts("[cred] unprivileged identity OK");
     } else {
         puts("[cred] unexpected user identity");
+        failures++;
+    }
+
+    int vfs_initrd_fd = vfs_open("hello.txt", O_RDONLY);
+    char vfs_initrd_data[14] = {0};
+    int vfs_initrd_ok = vfs_initrd_fd >= 0 &&
+        read(vfs_initrd_fd, vfs_initrd_data, sizeof(vfs_initrd_data) - 1) == 13 &&
+        memcmp(vfs_initrd_data, "Hello, world!", 13) == 0 &&
+        vfs_open("hello.txt", O_WRONLY) == -1 &&
+        vfs_open("vfs-missing.tmp", O_RDONLY) == -1;
+    int vfs_rights_fds[2] = {-1, -1};
+    int vfs_not_delegable = vfs_initrd_fd >= 0 &&
+        ipc_pair(vfs_rights_fds) == 0 &&
+        ipc_send_file(vfs_rights_fds[0], "x", 2, vfs_initrd_fd,
+                      FD_RIGHT_READ) == -1;
+    if (vfs_rights_fds[0] >= 0) close(vfs_rights_fds[0]);
+    if (vfs_rights_fds[1] >= 0) close(vfs_rights_fds[1]);
+    if (vfs_initrd_fd >= 0) close(vfs_initrd_fd);
+
+    int vfs_bkfs_fd = vfs_open("vfs-broker.tmp",
+                               O_CREAT | O_RDWR | O_TRUNC);
+    int vfs_bkfs_write = vfs_bkfs_fd >= 0
+        ? (int)write(vfs_bkfs_fd, "broker", 7) : -1;
+    if (vfs_bkfs_fd >= 0) close(vfs_bkfs_fd);
+    vfs_bkfs_fd = vfs_open("vfs-broker.tmp", O_RDONLY);
+    char vfs_bkfs_data[8] = {0};
+    int vfs_bkfs_ok = vfs_bkfs_fd >= 0 &&
+        read(vfs_bkfs_fd, vfs_bkfs_data, sizeof(vfs_bkfs_data) - 1) == 7 &&
+        memcmp(vfs_bkfs_data, "broker", 7) == 0;
+    if (vfs_bkfs_fd >= 0) close(vfs_bkfs_fd);
+    if (vfs_initrd_ok && vfs_not_delegable &&
+        vfs_bkfs_write == 7 && vfs_bkfs_ok) {
+        puts("[vfs] user-space open broker delegated initrd and BKFS descriptors");
+    } else {
+        puts("[vfs] user-space open broker failed");
         failures++;
     }
 

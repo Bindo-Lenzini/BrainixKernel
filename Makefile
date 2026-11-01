@@ -128,9 +128,10 @@ USER_OBJS_BASE := \
     $(BUILD_DIR)/user/crt0.o \
     $(BUILD_DIR)/user/syscall.o \
     $(BUILD_DIR)/user/libc.o \
-    $(BUILD_DIR)/user/dns.o
+    $(BUILD_DIR)/user/dns.o \
+    $(BUILD_DIR)/user/vfs_client.o
 
-USER_PROGS := test sh console echo wc ls cat whoami udp_send udp_echo host tcp_connect wget
+USER_PROGS := test sh console vfsd echo wc ls cat whoami udp_send udp_echo host tcp_connect wget
 
 .PHONY: all clean run smoke host-test
 
@@ -154,8 +155,11 @@ $(BUILD_DIR)/user/libc.o: $(USER_DIR)/libc.c $(USER_DIR)/libc.h $(USER_DIR)/user
 $(BUILD_DIR)/user/dns.o: $(USER_DIR)/dns.c $(USER_DIR)/dns.h $(USER_DIR)/user.h $(USER_DIR)/libc.h | $(BUILD_DIR)/user
 	$(CC) $(USER_CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/user/vfs_client.o: $(USER_DIR)/vfs_client.c $(USER_DIR)/vfs.h $(USER_DIR)/user.h $(USER_DIR)/libc.h | $(BUILD_DIR)/user
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
 define build_user_prog
-$(BUILD_DIR)/user/$(1).o: $(USER_DIR)/$(1).c $(USER_DIR)/user.h $(USER_DIR)/libc.h | $(BUILD_DIR)/user
+$(BUILD_DIR)/user/$(1).o: $(USER_DIR)/$(1).c $(USER_DIR)/user.h $(USER_DIR)/libc.h $(USER_DIR)/vfs.h | $(BUILD_DIR)/user
 	$$(CC) $$(USER_CFLAGS) -c $$< -o $$@
 
 $(BUILD_DIR)/user/$(1).elf: $(USER_OBJS_BASE) $(BUILD_DIR)/user/$(1).o $(USER_DIR)/linker.ld
