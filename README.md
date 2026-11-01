@@ -71,6 +71,9 @@ compliance, complete functionality, or comprehensive testing.
 The console service routes terminal input to the shell and shell output to the
 UART through IPC. PL011 register access, interrupt handling, and the UART
 receive buffer remain in the kernel; this is not yet a user-space UART driver.
+Console IPC descriptors follow least authority: the input service can only
+send, the output service can only receive, and the shell can send and receive.
+None of these descriptors can map the shared page or delegate endpoints.
 
 ### IPC API
 
@@ -135,6 +138,8 @@ page-aligned user address. The mapping remains writable and shared after
 - Added `console.elf` input/output user tasks with a kernel-created IPC endpoint
   pair. UART input is forwarded to the shell and shell output is relayed to the
   UART; the shell continues to use its ordinary stdin/stdout descriptors.
+  Console tasks receive least-authority endpoint rights, and verify forbidden
+  receive/send, mapping, and delegation operations fail during startup.
 - Added blocking IPC send/receive calls. Blocked syscalls retry after IPC state
   changes; queue sends wake receivers, queue consumption wakes senders, and
   closing endpoints wakes waiters. Terminal reads/writes and the console

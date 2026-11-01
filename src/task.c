@@ -110,12 +110,14 @@ static void task_set_ipc_descriptor(task_fd_t *descriptor, int ipc_idx,
     descriptor->ipc_rights = IPC_RIGHT_ALL;
 }
 
-int task_install_ipc_endpoint(task_t *task, int ipc_idx, uint8_t endpoint) {
-    if (!task || endpoint > 1 || !ipc_shared_page(ipc_idx)) return -1;
+int task_install_ipc_endpoint(task_t *task, int ipc_idx, uint8_t endpoint,
+                              uint8_t rights) {
+    if (!task || endpoint > 1 || !ipc_shared_page(ipc_idx) ||
+        rights == 0 || (rights & ~IPC_RIGHT_ALL) != 0) return -1;
     for (int fd = 3; fd < TASK_MAX_FDS; fd++) {
         if (task->fds[fd].used) continue;
         task_set_ipc_descriptor(&task->fds[fd], ipc_idx, endpoint);
-        task->fds[fd].ipc_rights = IPC_RIGHT_ALL;
+        task->fds[fd].ipc_rights = rights;
         ipc_ref(ipc_idx, endpoint);
         return fd;
     }

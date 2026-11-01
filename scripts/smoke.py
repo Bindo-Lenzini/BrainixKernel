@@ -173,7 +173,7 @@ def main():
                         process.returncode
                     ))
                     return 7
-                print("SMOKE_OK: boot, console server, IPC rights and delegation, kernel selftests, credentials, user access and COW passed")
+                print("SMOKE_OK: boot, least-authority console IPC, endpoint rights and delegation, kernel selftests, credentials, user access and COW passed")
                 return 0
 
             if process.poll() is not None:

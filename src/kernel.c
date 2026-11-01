@@ -1015,8 +1015,10 @@ void kernel_main(uint64_t dtb) {
 
         int console_ipc = ipc_alloc();
         if (console_ipc < 0) panic("failed to allocate console IPC channel");
-        if (task_install_ipc_endpoint(console_input_task, console_ipc, 0) < 0 ||
-            task_install_ipc_endpoint(console_output_task, console_ipc, 0) < 0)
+        if (task_install_ipc_endpoint(console_input_task, console_ipc, 0,
+                                      IPC_RIGHT_SEND) < 0 ||
+            task_install_ipc_endpoint(console_output_task, console_ipc, 0,
+                                      IPC_RIGHT_RECEIVE) < 0)
             panic("failed to install console server endpoints");
         console_input_task->console_server = 1;
         console_output_task->console_server = 1;
@@ -1036,7 +1038,9 @@ void kernel_main(uint64_t dtb) {
                 panic("user task has unexpected privileges");
             }
             uart_puts("BRAINIX_CREDENTIAL_SELFTEST_OK\n");
-            int shell_fd = task_install_ipc_endpoint(ue, console_ipc, 1);
+            int shell_fd = task_install_ipc_endpoint(
+                ue, console_ipc, 1,
+                IPC_RIGHT_SEND | IPC_RIGHT_RECEIVE);
             if (shell_fd < 0) panic("failed to install shell IPC endpoint");
             syscall_console_configure(console_ipc);
         }

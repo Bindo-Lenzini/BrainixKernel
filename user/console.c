@@ -9,6 +9,14 @@ int main(int argc, char **argv) {
 
     if (argc != 2) return 1;
     if (argv[1][0] == 'i') {
+        char probe = 0;
+        if (ipc_recv(CONSOLE_IPC_FD, &probe, sizeof(probe)) != -1 ||
+            ipc_map(CONSOLE_IPC_FD,
+                    (void *)(uintptr_t)0x40000000ULL) != -1 ||
+            ipc_send_endpoint(CONSOLE_IPC_FD, &probe, sizeof(probe),
+                              CONSOLE_IPC_FD, IPC_RIGHT_SEND) != -1) {
+            return 1;
+        }
         for (;;) {
             long got = read(STDIN_FILENO, &input, sizeof(input));
             if (got == 1) {
@@ -20,6 +28,12 @@ int main(int argc, char **argv) {
         }
     }
     if (argv[1][0] != 'o') return 1;
+    if (ipc_send(CONSOLE_IPC_FD, ready, sizeof(ready) - 1) != -1 ||
+        ipc_map(CONSOLE_IPC_FD, (void *)(uintptr_t)0x40000000ULL) != -1 ||
+        ipc_send_endpoint(CONSOLE_IPC_FD, ready, sizeof(ready) - 1,
+                          CONSOLE_IPC_FD, IPC_RIGHT_SEND) != -1) {
+        return 1;
+    }
 
     if (write(STDOUT_FILENO, ready, sizeof(ready) - 1) !=
         (long)(sizeof(ready) - 1)) {
