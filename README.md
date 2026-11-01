@@ -66,6 +66,18 @@ compliance, complete functionality, or comprehensive testing.
 - A small userland including a shell, basic utilities, and network examples.
 - Experimental virtual-device, storage, network, and graphical desktop support.
 
+### IPC API
+
+The user runtime exposes `ipc_pair(int fds[2])`, `ipc_send(fd, message, len)`,
+`ipc_recv(fd, message, capacity)`, and `ipc_map(fd, address)`. Each pair creates
+two bidirectional endpoint descriptors. Message queues hold up to 8 messages
+per receiving endpoint, with a 256-byte maximum per message. Send and receive
+are nonblocking: `IPC_EAGAIN` (`-2`) means the queue is full or empty, receive
+returns `0` for EOF after the peer closes, and invalid arguments return `-1`.
+`ipc_map` maps the channel's zero-initialized 4 KiB shared page at a free,
+page-aligned user address. The mapping remains writable and shared after
+`fork`; closing endpoints does not unmap existing mappings.
+
 ## Latest development update
 
 ### 2026-10-30 — memory safety checks and CI
@@ -198,8 +210,8 @@ snapshot; guest disk writes are not persisted to `disk.img`.
 
 | Check | What it covers |
 | --- | --- |
-| `make host-test` | ELF parser cases, BKFS permissions, malformed block-pointer rejection, blank-disk detection and v2 migration, scheduler reaper adoption/fallback and dead-orphan teardown, IPC queue semantics, and COW allocation-failure rollback |
-| `make smoke` | QEMU boot, kernel self-tests, credentials, BKFS user-file creation, `chmod`/`chown`, execute-bit denial, supplementary-group pointer/range/privilege checks, initrd write denial, invalid open flags, user-pointer handling, pipe and IPC rollback, forked IPC exchange, COW isolation, 260 repeated `exec` and fork/wait cycles, and a faulted-child teardown check |
+| `make host-test` | ELF parser cases, BKFS permissions, malformed block-pointer rejection, blank-disk detection and v2 migration, scheduler reaper adoption/fallback and dead-orphan teardown, IPC queue and shared-page lifetime semantics, and COW allocation-failure rollback/shared-mapping behavior |
+| `make smoke` | QEMU boot, kernel self-tests, credentials, BKFS user-file creation, `chmod`/`chown`, execute-bit denial, supplementary-group pointer/range/privilege checks, initrd write denial, invalid open flags, user-pointer handling, pipe and IPC rollback, shared-page aliases across `fork`, forked IPC message exchange, COW isolation, 260 repeated `exec` and fork/wait cycles, and a faulted-child teardown check |
 | GitHub Actions | Host tests, kernel build, and the headless QEMU smoke target |
 
 Tests cover selected regression scenarios. They do not prove the absence of
@@ -244,8 +256,8 @@ Near-term development priorities:
 3. Audit syscall boundaries, authorization checks, and partial-I/O behavior.
 4. Add malformed-input, allocation-failure, and fuzz tests for BKFS, networking,
    and device interfaces.
-4. Extend memory-protection review to kernel mappings and physical aliases.
-5. Improve CI coverage, then pursue scheduler, synchronization, and userland
+5. Extend memory-protection review to kernel mappings and physical aliases.
+6. Improve CI coverage, then pursue scheduler, synchronization, and userland
    improvements.
 
 Longer-term goals include `mmap`, demand paging, a page cache, SMP support,
