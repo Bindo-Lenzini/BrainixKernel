@@ -57,6 +57,7 @@ typedef struct {
     uint8_t  ipc_endpoint;
     uint8_t  ipc_rights;
     uint8_t  file_rights;
+    uint8_t  vfs_proxy;
 } task_fd_t;
 
 typedef enum {

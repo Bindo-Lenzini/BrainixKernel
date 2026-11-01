@@ -348,6 +348,14 @@ static void release_user_page(void *page) {
     if (phys_get_ref(page) != 0) phys_free_page(page);
 }
 
+static int entry_user_writable(uint64_t entry) {
+    return (entry & PTE_AP_USER_RW) != 0 && !(entry & PTE_AP_RDONLY);
+}
+
+static int entry_user_executable(uint64_t entry) {
+    return (entry & PTE_UXN) == 0;
+}
+
 static void destroy_user_tables(uint64_t *table, int level) {
     for (int i = 0; i < 512; i++) {
         uint64_t entry = table[i];
@@ -355,6 +363,8 @@ static void destroy_user_tables(uint64_t *table, int level) {
 
         void *page = PA_TO_KVA(entry & PTE_LEAF_PA_MASK);
         if (level == 3) {
+            phys_mapping_remove(page, entry_user_writable(entry),
+                                entry_user_executable(entry));
             release_user_page(page);
         } else {
             destroy_user_tables((uint64_t *)page, level + 1);
@@ -387,8 +397,31 @@ static uint64_t *walk_or_alloc(uint64_t *parent, uint64_t idx) {
         dsb_sy();
         return (uint64_t *)child_kva;
     }
+    if (!(parent[idx] & PTE_BIT1)) return 0;
     uint64_t child_pa = parent[idx] & PTE_LEAF_PA_MASK;
     return (uint64_t *)PA_TO_KVA(child_pa);
+}
+
+static uint64_t *walk_existing(uint64_t *parent, uint64_t idx) {
+    uint64_t entry = parent[idx];
+    if (!(entry & PTE_VALID) || !(entry & PTE_BIT1)) return 0;
+    return (uint64_t *)PA_TO_KVA(entry & PTE_LEAF_PA_MASK);
+}
+
+static int table_is_empty(const uint64_t *table) {
+    for (int i = 0; i < 512; i++) {
+        if (table[i] & PTE_VALID) return 0;
+    }
+    return 1;
+}
+
+static void discard_new_tables(uint64_t **parents, const uint64_t *indices,
+                               uint64_t **tables, int count) {
+    while (count > 0) {
+        count--;
+        parents[count][indices[count]] = 0;
+        phys_free_page(tables[count]);
+    }
 }
 
 void mmu_map_user_page(uint64_t l0_pa, uint64_t va, uint64_t pa,
@@ -409,15 +442,39 @@ static int map_user_page(uint64_t l0_pa, uint64_t va, uint64_t pa,
 
     uint64_t *l0 = (uint64_t *)PA_TO_KVA(l0_pa);
 
-    uint64_t *l1 = walk_or_alloc(l0, idx_l0(va));
-    if (!l1) return 0;
-    uint64_t *l2 = walk_or_alloc(l1, idx_l1(va));
-    if (!l2) return 0;
-    uint64_t *l3 = walk_or_alloc(l2, idx_l2(va));
-    if (!l3) return 0;
+    uint64_t *parents[3];
+    uint64_t *new_tables[3];
+    uint64_t indices[3];
+    int new_table_count = 0;
+    uint64_t *parent = l0;
+    const uint64_t path_indices[3] = {
+        idx_l0(va), idx_l1(va), idx_l2(va)
+    };
+    uint64_t *tables[3];
+    for (int level = 0; level < 3; level++) {
+        int was_missing = !(parent[path_indices[level]] & PTE_VALID);
+        uint64_t *child = walk_or_alloc(parent, path_indices[level]);
+        if (!child) {
+            discard_new_tables(parents, indices, new_tables,
+                               new_table_count);
+            return 0;
+        }
+        if (was_missing) {
+            parents[new_table_count] = parent;
+            indices[new_table_count] = path_indices[level];
+            new_tables[new_table_count] = child;
+            new_table_count++;
+        }
+        tables[level] = child;
+        parent = child;
+    }
+    uint64_t *l3 = tables[2];
 
     uint64_t *entry = &l3[idx_l3(va)];
-    if (*entry & PTE_VALID) return 0;
+    if (*entry & PTE_VALID) {
+        discard_new_tables(parents, indices, new_tables, new_table_count);
+        return 0;
+    }
 
     uint64_t flags;
     if (prot & VM_EXEC) {
@@ -426,6 +483,12 @@ static int map_user_page(uint64_t l0_pa, uint64_t va, uint64_t pa,
         flags = DESC_PAGE_USER_DATA;
     } else {
         flags = DESC_PAGE_USER_RO;
+    }
+    int writable = (prot & VM_WRITE) != 0;
+    int executable = (prot & VM_EXEC) != 0;
+    if (!phys_mapping_add((void *)PA_TO_KVA(pa), writable, executable)) {
+        discard_new_tables(parents, indices, new_tables, new_table_count);
+        return 0;
     }
     *entry = pa | flags | (shared ? PTE_SW_SHARED : 0);
 
@@ -456,12 +519,70 @@ int mmu_map_user_shared_page(uint64_t l0_pa, uint64_t va, uint64_t pa,
     return map_user_page(l0_pa, va, pa, VM_READ | VM_WRITE, asid, 1);
 }
 
+int mmu_unmap_user_page(uint64_t l0_pa, uint64_t va, uint16_t asid) {
+    if (!l0_pa || va < USER_CODE_BASE || va >= USER_VA_LIMIT ||
+        (va & 0xFFF)) {
+        return 0;
+    }
+
+    uint64_t *l0 = (uint64_t *)PA_TO_KVA(l0_pa);
+    uint64_t i0 = idx_l0(va);
+    uint64_t i1 = idx_l1(va);
+    uint64_t i2 = idx_l2(va);
+    uint64_t *l1 = walk_existing(l0, i0);
+    if (!l1) return 0;
+    uint64_t *l2 = walk_existing(l1, i1);
+    if (!l2) return 0;
+    uint64_t *l3 = walk_existing(l2, i2);
+    if (!l3) return 0;
+
+    uint64_t *leaf = &l3[idx_l3(va)];
+    uint64_t entry = *leaf;
+    if (!(entry & PTE_VALID) || !(entry & PTE_BIT1)) return 0;
+
+    *leaf = 0;
+    dsb_sy();
+    if (asid != 0) {
+        mmu_flush_asid(asid);
+#ifndef MMU_HOST_TEST
+    } else {
+        __asm__ volatile("tlbi vmalle1" ::: "memory");
+        dsb_sy();
+        isb();
+#endif
+    }
+    void *page = (void *)PA_TO_KVA(entry & PTE_LEAF_PA_MASK);
+    phys_mapping_remove(page, entry_user_writable(entry),
+                        entry_user_executable(entry));
+    release_user_page(page);
+
+    if (table_is_empty(l3)) {
+        l2[i2] = 0;
+        dsb_sy();
+        phys_free_page(l3);
+        if (table_is_empty(l2)) {
+            l1[i1] = 0;
+            dsb_sy();
+            phys_free_page(l2);
+            if (table_is_empty(l1)) {
+                l0[i0] = 0;
+                dsb_sy();
+                phys_free_page(l1);
+            }
+        }
+    }
+    return 1;
+}
+
 // ============================================================
 // Клонирование user AS.
 // ============================================================
 
 int mmu_clone_user_as(uint64_t src_l0_pa, uint64_t dst_l0_pa, uint16_t dst_asid) {
-    if (!src_l0_pa || !dst_l0_pa) return 0;
+    if (!src_l0_pa || !dst_l0_pa || src_l0_pa == dst_l0_pa ||
+        !table_is_empty((const uint64_t *)PA_TO_KVA(dst_l0_pa))) {
+        return 0;
+    }
 
     uint64_t *src_l0 = (uint64_t *)PA_TO_KVA(src_l0_pa);
 
@@ -486,20 +607,28 @@ int mmu_clone_user_as(uint64_t src_l0_pa, uint64_t dst_l0_pa, uint16_t dst_asid)
                     uint64_t src_pa = src_l3[i3] & PTE_LEAF_PA_MASK;
                     uint64_t orig_flags = src_l3[i3];
 
-                    // Определить is_code: если UXN=0 → исполняемая.
-                    int is_code = !(orig_flags & PTE_UXN);
-
                     // VA из индексов.
                     uint64_t va = (i0 << 39) | (i1 << 30) | (i2 << 21) | (i3 << 12);
 
                     // Копируем страницу.
                     uint8_t *new_pg = (uint8_t *)phys_alloc_page();
-                    if (!new_pg) return 0;
+                    if (!new_pg) {
+                        mmu_destroy_user_as(dst_l0_pa, dst_asid);
+                        return 0;
+                    }
                     const uint8_t *old_pg = (const uint8_t *)PA_TO_KVA(src_pa);
                     for (int k = 0; k < (int)PAGE_SIZE; k++) new_pg[k] = old_pg[k];
 
-                    mmu_map_user_page(dst_l0_pa, va, KVA_TO_PA(new_pg),
-                                      is_code, dst_asid);
+                    uint32_t prot = VM_READ;
+                    if (entry_user_executable(orig_flags)) prot |= VM_EXEC;
+                    else if (entry_user_writable(orig_flags)) prot |= VM_WRITE;
+                    if (!mmu_map_user_page_prot(dst_l0_pa, va,
+                                                KVA_TO_PA(new_pg), prot,
+                                                dst_asid)) {
+                        phys_free_page(new_pg);
+                        mmu_destroy_user_as(dst_l0_pa, dst_asid);
+                        return 0;
+                    }
                 }
             }
         }
@@ -527,6 +656,12 @@ static int cow_walk(uint64_t *src, uint64_t *dst, int level) {
 
             /* Shared pages stay writable in both address spaces. */
             int shared = (flags & PTE_SW_SHARED) != 0;
+            int writable = shared && entry_user_writable(entry);
+            int executable = entry_user_executable(entry);
+            if (!phys_mapping_add((void *)PA_TO_KVA(pa), writable,
+                                  executable)) {
+                return 0;
+            }
             if (!shared && !(flags & PTE_AP_RDONLY)) {
                 flags |= PTE_SW_COW;
             }
@@ -564,6 +699,11 @@ static void cow_commit_parent(uint64_t *src, const uint64_t *dst, int level) {
 
         if (level == 3) {
             if (child_entry & PTE_SW_COW) {
+                if (entry_user_writable(src[i])) {
+                    void *page =
+                        PA_TO_KVA(child_entry & PTE_LEAF_PA_MASK);
+                    phys_mapping_remove(page, 1, 0);
+                }
                 src[i] |= PTE_AP_RDONLY | PTE_SW_COW;
             }
         } else {
@@ -583,6 +723,8 @@ static void cow_destroy_partial(uint64_t *table, int level) {
 
         void *page = PA_TO_KVA(entry & PTE_LEAF_PA_MASK);
         if (level == 3) {
+            phys_mapping_remove(page, entry_user_writable(entry),
+                                entry_user_executable(entry));
             phys_free_page(page);
         } else {
             cow_destroy_partial((uint64_t *)page, level + 1);
@@ -595,7 +737,10 @@ static void cow_destroy_partial(uint64_t *table, int level) {
 int mmu_clone_user_as_cow(uint64_t src_l0_pa, uint16_t src_asid,
                           uint64_t dst_l0_pa, uint16_t dst_asid)
 {
-    if (!src_l0_pa || !dst_l0_pa) return 0;
+    if (!src_l0_pa || !dst_l0_pa || src_l0_pa == dst_l0_pa ||
+        !table_is_empty((const uint64_t *)PA_TO_KVA(dst_l0_pa))) {
+        return 0;
+    }
 
     uint64_t *src_l0 = (uint64_t *)PA_TO_KVA(src_l0_pa);
     uint64_t *dst_l0 = (uint64_t *)PA_TO_KVA(dst_l0_pa);
@@ -653,6 +798,7 @@ int mmu_cow_fault(uint64_t ttbr0_pa, uint16_t asid, uint64_t va) {
         uint64_t new_entry =
             pa | (flags & ~(PTE_AP_RDONLY | PTE_SW_COW));
 
+        if (!phys_mapping_add((void *)PA_TO_KVA(pa), 1, 0)) return 0;
         l3[i3] = new_entry;
         dsb_sy();
         mmu_flush_asid(asid);
@@ -671,10 +817,16 @@ int mmu_cow_fault(uint64_t ttbr0_pa, uint16_t asid, uint64_t va) {
     uint64_t new_entry =
         new_pa | (flags & ~(PTE_AP_RDONLY | PTE_SW_COW));
 
+    if (!phys_mapping_add(new_pg, 1, 0)) {
+        phys_free_page(new_pg);
+        return 0;
+    }
     l3[i3] = new_entry;
     dsb_sy();
     mmu_flush_asid(asid);
 
+    phys_mapping_remove((void *)PA_TO_KVA(pa), entry_user_writable(entry),
+                        entry_user_executable(entry));
     phys_free_page((void *)PA_TO_KVA(pa));
     return 1;
 }

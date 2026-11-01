@@ -6,9 +6,11 @@ int vfs_open(const char *path, int flags) {
     unsigned long path_len = strlen(path);
     if (path_len == 0 || path_len >= VFS_PATH_MAX) return -1;
 
-    int reply_fds[2] = {-1, -1};
-    if (ipc_pair_rights(reply_fds, IPC_RIGHT_RECEIVE,
-                        IPC_RIGHT_SEND | IPC_RIGHT_DELEGATE) < 0) {
+    int file_fds[2] = {-1, -1};
+    if (ipc_pair_rights(file_fds,
+                        IPC_RIGHT_SEND | IPC_RIGHT_RECEIVE |
+                            IPC_RIGHT_DELEGATE,
+                        IPC_RIGHT_SEND | IPC_RIGHT_RECEIVE) < 0) {
         return -1;
     }
 
@@ -21,38 +23,30 @@ int vfs_open(const char *path, int flags) {
     long sent;
     do {
         sent = ipc_send_endpoint(VFS_CLIENT_FD, &request, sizeof(request),
-                                 reply_fds[1],
-                                 IPC_RIGHT_SEND | IPC_RIGHT_DELEGATE);
+                                 file_fds[0],
+                                 IPC_RIGHT_SEND | IPC_RIGHT_RECEIVE);
         if (sent == IPC_EAGAIN) yield();
     } while (sent == IPC_EAGAIN);
-    close(reply_fds[1]);
+    close(file_fds[0]);
     if (sent != (long)sizeof(request)) {
-        close(reply_fds[0]);
+        close(file_fds[1]);
         return -1;
     }
 
-    for (unsigned int attempt = 0; attempt < 100000; attempt++) {
-        vfs_reply_t reply = {-1};
-        int received_fd = -1;
-        unsigned int received_rights = 0;
-        long received = ipc_recv_file(reply_fds[0], &reply, sizeof(reply),
-                                      &received_fd, &received_rights);
-        if (received == IPC_EAGAIN) {
-            yield();
-            continue;
-        }
-
-        close(reply_fds[0]);
-        if (received != (long)sizeof(reply) || reply.status != 0 ||
-            received_fd < 0) {
-            if (received_fd >= 0) close(received_fd);
-            return -1;
-        }
-        return received_fd;
+    vfs_reply_t reply = {-1};
+    long received = ipc_recv_wait(file_fds[1], &reply, sizeof(reply));
+    int access_mode = flags & (O_WRONLY | O_RDWR);
+    unsigned int rights = access_mode == O_RDONLY ? FD_RIGHT_READ :
+        access_mode == O_WRONLY ? FD_RIGHT_WRITE :
+        access_mode == O_RDWR ? FD_RIGHT_READ | FD_RIGHT_WRITE : 0;
+    if (rights != 0) rights |= FD_RIGHT_DELEGATE;
+    if (received != (long)sizeof(reply) || reply.status != 0 ||
+        rights == 0 || vfs_fd_control(file_fds[1], (int)rights) !=
+            (long)rights) {
+        close(file_fds[1]);
+        return -1;
     }
-
-    close(reply_fds[0]);
-    return -1;
+    return file_fds[1];
 }
 
 int open(const char *path, int flags) {

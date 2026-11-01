@@ -88,17 +88,29 @@ int tcp_send_data(tcp_conn_t *c, const void *buf, uint32_t len) {
     return (int)len;
 }
 
-uint32_t tcp_recv_data(tcp_conn_t *c, void *buf, uint32_t max) {
+uint32_t tcp_peek_data(tcp_conn_t *c, void *buf, uint32_t max) {
     if (!c || !c->used) return 0;
     if (c->rx_len == 0) return 0;
 
     uint32_t n = c->rx_len < max ? c->rx_len : max;
+    if (!buf || n == 0) return 0;
     uint8_t *dst = (uint8_t *)buf;
     for (uint32_t i = 0; i < n; i++) dst[i] = c->rx_buf[i];
+    return n;
+}
 
-    uint32_t rem = c->rx_len - n;
-    for (uint32_t i = 0; i < rem; i++) c->rx_buf[i] = c->rx_buf[i + n];
+int tcp_consume_data(tcp_conn_t *c, uint32_t len) {
+    if (!c || !c->used || len > c->rx_len) return 0;
+
+    uint32_t rem = c->rx_len - len;
+    for (uint32_t i = 0; i < rem; i++) c->rx_buf[i] = c->rx_buf[i + len];
     c->rx_len = rem;
+    return 1;
+}
+
+uint32_t tcp_recv_data(tcp_conn_t *c, void *buf, uint32_t max) {
+    uint32_t n = tcp_peek_data(c, buf, max);
+    if (n != 0 && !tcp_consume_data(c, n)) return 0;
     return n;
 }
 
@@ -130,8 +142,7 @@ int tcp_handle_ipv4(const uint8_t *iph, uint32_t ip_total_len) {
                    ((uint32_t)tcph[10] << 8) | (uint32_t)tcph[11];
 
     uint8_t data_off = (tcph[12] >> 4) * 4;
-    if (data_off < 20) return 0;
-    if (ihl + 20 > ip_total_len) return 0;
+    if (data_off < 20 || ihl + data_off > ip_total_len) return 0;
 
     uint8_t flags = tcph[13];
 

@@ -377,7 +377,7 @@ void kwin_cmd_help(win_t *w) {
     win_puts(w, "  images - photos - personalize");
 }
 void kwin_cmd_ver(win_t *w) {
-    win_puts(w, "BrainixKernel OS v" BRAINIX_VERSION);
+    win_puts(w, "BrainixKernel kernel v" BRAINIX_VERSION);
     win_puts(w, "ELF loader + per-process AS");
 }
 void kwin_cmd_tasks(win_t *w) {
@@ -962,7 +962,7 @@ void kernel_main(uint64_t dtb) {
 
     uart_puts("[step 43] create ksh window\n");
     win_init(&g_term);
-    win_puts(&g_term, "BrainixKernel OS v" BRAINIX_VERSION);
+    win_puts(&g_term, "BrainixKernel kernel v" BRAINIX_VERSION);
     win_puts(&g_term, "ELF loader + per-process AS");
     win_puts(&g_term, "");
     win_puts(&g_term, "Try 'sysinfo'.");

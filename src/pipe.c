@@ -63,7 +63,7 @@ void pipe_close_write(int idx) {
     }
 }
 
-int pipe_read(int idx, void *buf, uint32_t max) {
+int pipe_peek(int idx, void *buf, uint32_t max) {
     if (idx < 0 || idx >= PIPE_MAX) return -1;
     pipe_t *p = &g_pipes[idx];
     if (!p->used) return -1;
@@ -75,12 +75,30 @@ int pipe_read(int idx, void *buf, uint32_t max) {
     }
 
     uint32_t n = (max < avail) ? max : avail;
+    if (n == 0) return 0;
+    if (!buf) return -1;
     uint8_t *dst = (uint8_t *)buf;
     for (uint32_t i = 0; i < n; i++) {
-        dst[i] = p->buf[p->head];
-        p->head = (p->head + 1) % PIPE_BUF_SIZE;
+        dst[i] = p->buf[(p->head + i) % PIPE_BUF_SIZE];
     }
     return (int)n;
+}
+
+int pipe_consume(int idx, uint32_t len) {
+    if (idx < 0 || idx >= PIPE_MAX) return 0;
+    pipe_t *p = &g_pipes[idx];
+    if (!p->used) return 0;
+
+    uint32_t avail = (p->tail + PIPE_BUF_SIZE - p->head) % PIPE_BUF_SIZE;
+    if (len > avail) return 0;
+    p->head = (p->head + len) % PIPE_BUF_SIZE;
+    return 1;
+}
+
+int pipe_read(int idx, void *buf, uint32_t max) {
+    int n = pipe_peek(idx, buf, max);
+    if (n > 0 && !pipe_consume(idx, (uint32_t)n)) return -1;
+    return n;
 }
 
 int pipe_write(int idx, const void *buf, uint32_t len) {

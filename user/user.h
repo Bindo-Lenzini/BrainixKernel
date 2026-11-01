@@ -38,6 +38,9 @@
 #define SYS_IPC_SEND_FILE 38
 #define SYS_IPC_RECV_FILE 39
 #define SYS_OPEN_BACKEND  40
+#define SYS_VFS_FD        41
+#define SYS_IPC_SEND_VFS  42
+#define SYS_IPC_RECV_VFS  43
 #define IPC_EAGAIN   (-2)
 #define IPC_MESSAGE_MAX 256
 #define IPC_SHARED_PAGE_SIZE 4096
@@ -100,6 +103,10 @@ long ipc_send_file(int fd, const void *message, unsigned long len,
                    int transfer_fd, unsigned int transfer_rights);
 long ipc_recv_file(int fd, void *message, unsigned long capacity,
                    int *received_fd, unsigned int *received_rights);
+long ipc_send_vfs(int fd, const void *message, unsigned long len,
+                  int transfer_fd, unsigned int transfer_rights);
+long ipc_recv_vfs(int fd, void *message, unsigned long capacity,
+                  int *received_fd, unsigned int *received_rights);
 int  ipc_map(int fd, void *address);
 int  dup2  (int oldfd, int newfd);
 int  socket(int domain, int type, int protocol);

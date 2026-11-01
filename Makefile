@@ -30,7 +30,7 @@ CFLAGS := --target=$(TARGET) \
           -mgeneral-regs-only -fno-stack-protector \
           -fno-pic -fno-pie -fno-builtin -mno-outline-atomics \
           -MMD -MP \
-          -I$(SRC_DIR)
+          -I$(SRC_DIR) -Iinclude
 
 ASFLAGS := --target=$(TARGET)
 
@@ -38,9 +38,10 @@ USER_CFLAGS := --target=$(TARGET) \
                -ffreestanding -nostdlib -O2 -Wall -Wextra \
                -mgeneral-regs-only -fno-stack-protector \
                -fno-pic -fno-pie -fno-builtin -mno-outline-atomics \
-               -I$(USER_DIR)
+               -I$(USER_DIR) -Iinclude
 
 QEMU_FLAGS := -M virt,gic-version=2 -cpu cortex-a72 -m 2048M \
+              -smp 1 \
               -device virtio-gpu-pci \
               -device virtio-keyboard-pci \
               -device virtio-tablet-pci \
@@ -103,6 +104,7 @@ C_SOURCES := \
     $(SRC_DIR)/clipboard.c \
     $(SRC_DIR)/about.c \
     $(SRC_DIR)/backdrop.c \
+    $(SRC_DIR)/ipv4.c \
     $(SRC_DIR)/net.c \
     $(SRC_DIR)/arp.c \
     $(SRC_DIR)/dhcp.c \
@@ -129,6 +131,7 @@ USER_OBJS_BASE := \
     $(BUILD_DIR)/user/syscall.o \
     $(BUILD_DIR)/user/libc.o \
     $(BUILD_DIR)/user/dns.o \
+    $(BUILD_DIR)/user/io.o \
     $(BUILD_DIR)/user/vfs_client.o
 
 USER_PROGS := test sh console vfsd echo wc ls cat whoami udp_send udp_echo host tcp_connect wget
@@ -155,11 +158,14 @@ $(BUILD_DIR)/user/libc.o: $(USER_DIR)/libc.c $(USER_DIR)/libc.h $(USER_DIR)/user
 $(BUILD_DIR)/user/dns.o: $(USER_DIR)/dns.c $(USER_DIR)/dns.h $(USER_DIR)/user.h $(USER_DIR)/libc.h | $(BUILD_DIR)/user
 	$(CC) $(USER_CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/user/vfs_client.o: $(USER_DIR)/vfs_client.c $(USER_DIR)/vfs.h $(USER_DIR)/user.h $(USER_DIR)/libc.h | $(BUILD_DIR)/user
+$(BUILD_DIR)/user/vfs_client.o: $(USER_DIR)/vfs_client.c $(USER_DIR)/vfs.h $(USER_DIR)/user.h $(USER_DIR)/libc.h include/vfs_protocol.h | $(BUILD_DIR)/user
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/user/io.o: $(USER_DIR)/io.c $(USER_DIR)/vfs.h $(USER_DIR)/user.h include/vfs_protocol.h | $(BUILD_DIR)/user
 	$(CC) $(USER_CFLAGS) -c $< -o $@
 
 define build_user_prog
-$(BUILD_DIR)/user/$(1).o: $(USER_DIR)/$(1).c $(USER_DIR)/user.h $(USER_DIR)/libc.h $(USER_DIR)/vfs.h | $(BUILD_DIR)/user
+$(BUILD_DIR)/user/$(1).o: $(USER_DIR)/$(1).c $(USER_DIR)/user.h $(USER_DIR)/libc.h $(USER_DIR)/vfs.h include/vfs_protocol.h | $(BUILD_DIR)/user
 	$$(CC) $$(USER_CFLAGS) -c $$< -o $$@
 
 $(BUILD_DIR)/user/$(1).elf: $(USER_OBJS_BASE) $(BUILD_DIR)/user/$(1).o $(USER_DIR)/linker.ld
@@ -238,15 +244,55 @@ $(BUILD_DIR)/ipc_test: tests/ipc_test.c $(SRC_DIR)/ipc.c $(SRC_DIR)/ipc.h | $(BU
 	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -I$(SRC_DIR) \
 	    tests/ipc_test.c $(SRC_DIR)/ipc.c -o $@
 
+$(BUILD_DIR)/tcp_recv_test: tests/tcp_recv_test.c $(SRC_DIR)/tcp.c \
+                            $(SRC_DIR)/tcp.h | $(BUILD_DIR)
+	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -I$(SRC_DIR) \
+	    tests/tcp_recv_test.c $(SRC_DIR)/tcp.c -o $@
+
+$(BUILD_DIR)/pipe_recv_test: tests/pipe_recv_test.c $(SRC_DIR)/pipe.c \
+                             $(SRC_DIR)/pipe.h | $(BUILD_DIR)
+	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -I$(SRC_DIR) \
+	    tests/pipe_recv_test.c $(SRC_DIR)/pipe.c -o $@
+
+$(BUILD_DIR)/socket_rx_test: tests/socket_rx_test.c $(SRC_DIR)/socket.c \
+                             $(SRC_DIR)/socket.h | $(BUILD_DIR)
+	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -I$(SRC_DIR) \
+	    tests/socket_rx_test.c $(SRC_DIR)/socket.c -o $@
+
+$(BUILD_DIR)/physmem_test: tests/physmem_test.c $(SRC_DIR)/physmem.c \
+                           $(SRC_DIR)/physmem.h $(SRC_DIR)/dtb.h \
+                           $(SRC_DIR)/mmu.h | $(BUILD_DIR)
+	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -I$(SRC_DIR) \
+	    tests/physmem_test.c $(SRC_DIR)/physmem.c -o $@
+
+$(BUILD_DIR)/net_input_test: tests/net_input_test.c $(SRC_DIR)/ipv4.c \
+                             $(SRC_DIR)/icmp.c $(SRC_DIR)/udp.c \
+                             $(SRC_DIR)/tcp.c \
+                             $(SRC_DIR)/socket.c | $(BUILD_DIR)
+	$(HOSTCC) -std=c11 -Wall -Wextra -Werror \
+	    -fsanitize=address,undefined -fno-omit-frame-pointer \
+	    -ffunction-sections -fdata-sections -I$(SRC_DIR) \
+	    tests/net_input_test.c $(SRC_DIR)/ipv4.c $(SRC_DIR)/icmp.c \
+	    $(SRC_DIR)/udp.c \
+	    $(SRC_DIR)/tcp.c $(SRC_DIR)/socket.c $(HOST_GC_SECTIONS) -o $@
+
 -include $(C_OBJS:.o=.d) $(GEN_OBJS:.o=.d)
 
 host-test: $(BUILD_DIR)/elf_test $(BUILD_DIR)/bkfs_test $(BUILD_DIR)/sched_test \
-           $(BUILD_DIR)/mmu_cow_test $(BUILD_DIR)/ipc_test
+           $(BUILD_DIR)/mmu_cow_test $(BUILD_DIR)/ipc_test \
+           $(BUILD_DIR)/tcp_recv_test $(BUILD_DIR)/pipe_recv_test \
+           $(BUILD_DIR)/socket_rx_test $(BUILD_DIR)/physmem_test \
+           $(BUILD_DIR)/net_input_test
 	$(BUILD_DIR)/elf_test
 	$(BUILD_DIR)/bkfs_test
 	$(BUILD_DIR)/sched_test
 	$(BUILD_DIR)/mmu_cow_test
 	$(BUILD_DIR)/ipc_test
+	$(BUILD_DIR)/tcp_recv_test
+	$(BUILD_DIR)/pipe_recv_test
+	$(BUILD_DIR)/socket_rx_test
+	$(BUILD_DIR)/physmem_test
+	$(BUILD_DIR)/net_input_test
 
 clean:
 	rm -rf $(BUILD_DIR)

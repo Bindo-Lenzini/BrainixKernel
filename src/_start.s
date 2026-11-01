@@ -1,4 +1,4 @@
-// BrainixKernel (BKOS) — boot stub + diagnostics.
+// BrainixKernel kernel — boot stub + diagnostics.
 //
 // Печатает цифры в UART0 по мере продвижения:
 //   1 — _start

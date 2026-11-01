@@ -24,6 +24,10 @@ void  *phys_alloc_pages(uint64_t n);
 void     phys_inc_ref(void *pa);
 uint16_t phys_get_ref(void *pa);
 
+// Tracks user mappings to prevent writable/executable physical aliases.
+int phys_mapping_add(void *pa, int writable, int executable);
+void phys_mapping_remove(void *pa, int writable, int executable);
+
 uint64_t physmem_total_pages(void);
 uint64_t physmem_free_pages(void);
 

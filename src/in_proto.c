@@ -72,19 +72,22 @@ int proto_tcp_recv(void *ctx, void *buf, int max_len, struct sockaddr *from) {
     task_fd_t *f = (task_fd_t *)ctx;
     tcp_conn_t *c = tcp_get(f->tcp_idx);
     if (!c || c->rx_len == 0) return 0;
-    int copy_len = (int)c->rx_len > max_len ? max_len : (int)c->rx_len;
-    uint8_t *dst = (uint8_t *)buf;
-    for (int i = 0; i < copy_len; i++) dst[i] = c->rx_buf[i];
-    for (int i = copy_len; i < (int)c->rx_len; i++) c->rx_buf[i - copy_len] = c->rx_buf[i];
-    c->rx_len -= copy_len;
-    
+    uint32_t copy_len = tcp_peek_data(c, buf, (uint32_t)max_len);
+    if (copy_len == 0) return 0;
+
     struct sockaddr_in *sin = (struct sockaddr_in *)from;
     if (sin) {
         sin->sin_port = c->remote_port;
         uint8_t *a = (uint8_t *)&sin->sin_addr;
         a[0] = c->remote_ip[0]; a[1] = c->remote_ip[1]; a[2] = c->remote_ip[2]; a[3] = c->remote_ip[3];
     }
-    return copy_len;
+    return (int)copy_len;
+}
+
+int proto_tcp_consume(void *ctx, uint32_t len) {
+    task_fd_t *f = (task_fd_t *)ctx;
+    tcp_conn_t *c = tcp_get(f->tcp_idx);
+    return tcp_consume_data(c, len);
 }
 
 int proto_tcp_close(void *ctx) {
@@ -132,11 +135,9 @@ int proto_udp_recv(void *ctx, void *buf, int max_len, struct sockaddr *from) {
     if (!s) return -1;
     if (s->rx_head == s->rx_tail) return 0;
     sock_pkt_t *p = &s->rx[s->rx_head];
-    s->rx_head = (s->rx_head + 1) % SOCK_RX_QUEUE;
     
     int copy_len = p->len > max_len ? max_len : p->len;
-    uint8_t *dst = (uint8_t *)buf;
-    for (int i = 0; i < copy_len; i++) dst[i] = p->data[i];
+    if (sock_peek_rx(s, buf, (uint32_t)max_len) < 0) return -1;
     
     struct sockaddr_in *sin = (struct sockaddr_in *)from;
     if (sin) {
@@ -145,6 +146,16 @@ int proto_udp_recv(void *ctx, void *buf, int max_len, struct sockaddr *from) {
         a[0] = p->src_ip[0]; a[1] = p->src_ip[1]; a[2] = p->src_ip[2]; a[3] = p->src_ip[3];
     }
     return copy_len;
+}
+
+int proto_udp_consume(void *ctx, uint32_t len) {
+    task_fd_t *f = (task_fd_t *)ctx;
+    socket_t *s = sock_get(f->sock_idx);
+    if (!s || s->rx_head == s->rx_tail) return 0;
+
+    sock_pkt_t *packet = &s->rx[s->rx_head];
+    if (len > packet->len) return 0;
+    return sock_consume_rx(s);
 }
 
 int proto_udp_close(void *ctx) {
@@ -162,6 +173,7 @@ static struct protosw inetsw[] = {
         .pr_attach = proto_tcp_attach, .pr_detach = proto_tcp_detach,
         .pr_bind = proto_tcp_bind, .pr_connect = proto_tcp_connect, .pr_listen = proto_tcp_listen,
         .pr_send = proto_tcp_send, .pr_recv = proto_tcp_recv, .pr_close = proto_tcp_close,
+        .pr_consume = proto_tcp_consume,
         .pr_input = proto_tcp_input,
     },
     {
@@ -169,6 +181,7 @@ static struct protosw inetsw[] = {
         .pr_attach = proto_udp_attach, .pr_detach = proto_udp_detach,
         .pr_bind = proto_udp_bind, .pr_connect = proto_udp_connect, .pr_listen = proto_udp_listen,
         .pr_send = proto_udp_send, .pr_recv = proto_udp_recv, .pr_close = proto_udp_close,
+        .pr_consume = proto_udp_consume,
         .pr_input = proto_udp_input,
     }
 };

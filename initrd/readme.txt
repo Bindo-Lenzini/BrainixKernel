@@ -1,11 +1,10 @@
-BrainixKernel (BKOS)
-====================
+BrainixKernel
+=============
 
-A hobby OS written from scratch:
+An experimental AArch64 kernel with a development/test userland:
 - ARM64, QEMU virt
-- Multitasking kernel, 60 Hz
+- Multitasking and system calls
 - virtio-gpu, keyboard, tablet
-- Userspace (EL0) with syscalls
-- Simple initrd filesystem
 
-Type 'help' in the Terminal window.
+This is not a standalone OS distribution. LambdaNexus OS is a separate
+distribution based on the BrainixKernel kernel.

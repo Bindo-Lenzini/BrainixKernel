@@ -44,6 +44,9 @@
 #define SYS_IPC_SEND_FILE 38
 #define SYS_IPC_RECV_FILE 39
 #define SYS_OPEN_BACKEND  40
+#define SYS_VFS_FD        41
+#define SYS_IPC_SEND_VFS  42
+#define SYS_IPC_RECV_VFS  43
 
 void syscall_console_configure(int ipc_idx);
 uint64_t syscall_dispatch(uint64_t sp);

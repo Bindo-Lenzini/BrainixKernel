@@ -21,6 +21,7 @@
 #include "tcp.h"
 #include "heap.h"
 #include "ipc.h"
+#include <vfs_protocol.h>
 
 extern void uart_putc(char c);
 extern void uart_puts(const char *s);
@@ -30,8 +31,11 @@ extern int  uart_rx_pop(uint8_t *out);
 #define KIO_BUF 512
 #define FD_BASE 3     // 0,1,2 — стандартные
 #define CONSOLE_IPC_ENDPOINT 1
+#define VFS_PROXY_RIGHTS IPC_FILE_RIGHT_ALL
 
 static int g_console_ipc_idx = -1;
+static uint8_t g_uart_pending[KIO_BUF];
+static size_t g_uart_pending_len;
 
 void syscall_console_configure(int ipc_idx) {
     if (ipc_idx < 0 || !ipc_shared_page(ipc_idx)) return;
@@ -69,6 +73,22 @@ static void fd_clear_slot(task_fd_t *f) {
     f->ipc_endpoint = 0;
     f->ipc_rights = 0;
     f->file_rights = 0;
+    f->vfs_proxy = 0;
+}
+
+static int copy_user_string(char *dst, const char *user_string,
+                            size_t capacity) {
+    if (!dst || !user_string || capacity == 0) return 0;
+
+    uintptr_t source = (uintptr_t)user_string;
+    for (size_t i = 0; i < capacity; i++) {
+        if (source > UINTPTR_MAX - i ||
+            copy_from_user(&dst[i], (const void *)(source + i), 1) < 0) {
+            return 0;
+        }
+        if (dst[i] == 0) return 1;
+    }
+    return 0;
 }
 
 static int bkfs_access_allowed(task_t *task, int inode, int want) {
@@ -124,7 +144,7 @@ static uint64_t sys_write(int fd, const void *user_buf, size_t len) {
 
     if (!f) return (uint64_t)-1;
 
-    // BKFS-файл (offset всегда 0, перезапись целиком).
+    // BKFS file.
     if (f->src == TFD_BKFS) {
         task_t *cur = sched_current();
         if (!(f->file_rights & FD_RIGHT_WRITE) ||
@@ -134,10 +154,10 @@ static uint64_t sys_write(int fd, const void *user_buf, size_t len) {
         if (len > KIO_BUF) len = KIO_BUF;
         uint8_t kbuf[KIO_BUF];
         if (copy_from_user(kbuf, user_buf, len) < 0) return (uint64_t)-1;
-        int w = bkfs_write_at_for(f->bkfs_inode, 0, kbuf, (uint32_t)len,
-                                  cur->cred);
+        int w = bkfs_write_at_for(f->bkfs_inode, f->offset, kbuf,
+                                  (uint32_t)len, cur->cred);
         if (w < 0) return (uint64_t)-1;
-        f->offset = (uint32_t)w;
+        f->offset += (uint32_t)w;
         return (uint64_t)w;
     }
 
@@ -189,16 +209,32 @@ static uint64_t sys_read(int fd, void *user_buf, size_t len) {
             return (uint64_t)result;
         }
 
-        size_t got = 0;
-        while (got < len) {
+        size_t got = g_uart_pending_len;
+        if (got > len) got = len;
+        int stop_at_newline = 0;
+        if (!cur || !cur->console_server) {
+            for (size_t i = 0; i < g_uart_pending_len; i++) {
+                if (g_uart_pending[i] == '\n') {
+                    stop_at_newline = 1;
+                    break;
+                }
+            }
+        }
+        while (g_uart_pending_len < len && !stop_at_newline) {
             uint8_t b;
             if (!uart_rx_pop(&b)) break;
             if (b == '\r') b = '\n';
-            kbuf[got++] = b;
-            if ((!cur || !cur->console_server) && b == '\n') break;
+            g_uart_pending[g_uart_pending_len++] = b;
+            got++;
+            if ((!cur || !cur->console_server) && b == '\n')
+                stop_at_newline = 1;
         }
         if (got == 0) return 0;
-        if (copy_to_user(user_buf, kbuf, got) < 0) return (uint64_t)-1;
+        if (copy_to_user(user_buf, g_uart_pending, got) < 0)
+            return (uint64_t)-1;
+        for (size_t i = got; i < g_uart_pending_len; i++)
+            g_uart_pending[i - got] = g_uart_pending[i];
+        g_uart_pending_len -= got;
         return got;
     }
 
@@ -237,10 +273,12 @@ static uint64_t sys_read(int fd, void *user_buf, size_t len) {
     if (f->src == TFD_PIPE_READ) {
         if (len > KIO_BUF) len = KIO_BUF;
         uint8_t kbuf[KIO_BUF];
-        int r = pipe_read(f->pipe_idx, kbuf, (uint32_t)len);
+        int r = pipe_peek(f->pipe_idx, kbuf, (uint32_t)len);
         if (r == 0) return 0;                   // EOF
         if (r < 0) return (uint64_t)-2;         // EAGAIN
         if (copy_to_user(user_buf, kbuf, (size_t)r) < 0) return (uint64_t)-1;
+        if (!pipe_consume(f->pipe_idx, (uint32_t)r))
+            return (uint64_t)-1;
         return (uint64_t)r;
     }
 
@@ -271,15 +309,8 @@ static uint64_t sys_open(const char *user_name, int flags) {
     }
 
     char kname[128];
-    int n = 0;
-    for (; n < (int)sizeof(kname) - 1; n++) {
-        char c;
-        if (copy_from_user(&c, user_name + n, 1) < 0) return (uint64_t)-1;
-        kname[n] = c;
-        if (c == 0) break;
-    }
-    kname[sizeof(kname) - 1] = 0;
-    if (kname[0] == 0) return (uint64_t)-1;
+    if (!copy_user_string(kname, user_name, sizeof(kname)) || kname[0] == 0)
+        return (uint64_t)-1;
 
     int create  = (flags & BKFS_O_CREAT) ? 1 : 0;
     int trunc   = (flags & BKFS_O_TRUNC) ? 1 : 0;
@@ -349,13 +380,90 @@ static uint64_t sys_close(int fd) {
 
 static uint64_t sys_fd_restrict(int fd, uint64_t rights) {
     task_fd_t *descriptor = fd_used(fd);
-    if (!descriptor ||
-        (descriptor->src != TFD_BKFS && descriptor->src != TFD_INITRD) ||
-        (rights & ~FD_RIGHT_ALL) != 0 ||
+    if (!descriptor) return (uint64_t)-1;
+
+    uint8_t allowed_rights;
+    if (descriptor->src == TFD_IPC && descriptor->vfs_proxy) {
+        allowed_rights = VFS_PROXY_RIGHTS;
+    } else if (descriptor->src == TFD_BKFS ||
+               descriptor->src == TFD_INITRD) {
+        allowed_rights = FD_RIGHT_ALL;
+    } else {
+        return (uint64_t)-1;
+    }
+
+    if ((rights & ~allowed_rights) != 0 ||
         (rights & ~descriptor->file_rights) != 0) {
         return (uint64_t)-1;
     }
     descriptor->file_rights = (uint8_t)rights;
+    return 0;
+}
+
+static uint64_t sys_vfs_fd(int fd, int mark) {
+    task_t *current = sched_current();
+    task_fd_t *descriptor = fd_used(fd);
+    if (!descriptor || descriptor->src != TFD_IPC) return (uint64_t)-1;
+
+    if ((mark & VFS_FD_REGISTER) != 0) {
+        uint8_t rights = (uint8_t)(mark & IPC_FILE_RIGHT_ALL);
+        if (!current || !current->vfs_backend ||
+            descriptor->ipc_rights !=
+                (IPC_RIGHT_SEND | IPC_RIGHT_RECEIVE) ||
+            (mark & ~(VFS_FD_REGISTER | IPC_FILE_RIGHT_ALL)) != 0 ||
+            ipc_register_vfs_proxy(descriptor->ipc_idx,
+                                   descriptor->ipc_endpoint, rights) < 0) {
+            return (uint64_t)-1;
+        }
+        return rights;
+    }
+
+    if (mark == 0) {
+        return descriptor->vfs_proxy ? descriptor->file_rights
+                                     : (uint64_t)-1;
+    }
+
+    if (mark < 0 || (mark & ~IPC_FILE_RIGHT_ALL) != 0 || mark == 0) {
+        return (uint64_t)-1;
+    }
+    int registered_rights = ipc_vfs_proxy_rights(
+        descriptor->ipc_idx, descriptor->ipc_endpoint);
+    if (registered_rights < 0 || (mark & ~registered_rights) != 0)
+        return (uint64_t)-1;
+    if (descriptor->vfs_proxy) {
+        if (((uint8_t)mark & ~descriptor->file_rights) != 0)
+            return (uint64_t)-1;
+    }
+    descriptor->vfs_proxy = 1;
+    descriptor->file_rights = (uint8_t)mark;
+    return (uint64_t)mark;
+}
+
+static uint32_t vfs_proxy_u32(const uint8_t *bytes) {
+    return (uint32_t)bytes[0] |
+           ((uint32_t)bytes[1] << 8) |
+           ((uint32_t)bytes[2] << 16) |
+           ((uint32_t)bytes[3] << 24);
+}
+
+static int vfs_proxy_request_allowed(const task_fd_t *descriptor,
+                                    const uint8_t *message, uint64_t len) {
+    if (!descriptor->vfs_proxy) return 1;
+    if (len < VFS_IO_HEADER_SIZE) return 0;
+
+    uint32_t magic = vfs_proxy_u32(message);
+    uint32_t operation = vfs_proxy_u32(message + 4);
+    uint32_t length = vfs_proxy_u32(message + 8);
+    if (magic != VFS_IO_MAGIC || length > VFS_IO_DATA_MAX) return 0;
+
+    if (operation == VFS_OP_READ) {
+        return (descriptor->file_rights & FD_RIGHT_READ) != 0 &&
+               len == VFS_IO_HEADER_SIZE;
+    }
+    if (operation == VFS_OP_WRITE) {
+        return (descriptor->file_rights & FD_RIGHT_WRITE) != 0 &&
+               len == VFS_IO_HEADER_SIZE + length;
+    }
     return 0;
 }
 
@@ -435,6 +543,7 @@ static uint64_t sys_ipc_pair(int *user_fds, uint64_t first_rights,
     first->ipc_endpoint = 0;
     first->ipc_rights = (uint8_t)first_rights;
     first->file_rights = 0;
+    first->vfs_proxy = 0;
 
     int second_fd = fd_alloc_slot();
     if (second_fd < 0) {
@@ -450,6 +559,7 @@ static uint64_t sys_ipc_pair(int *user_fds, uint64_t first_rights,
     second->ipc_endpoint = 1;
     second->ipc_rights = (uint8_t)second_rights;
     second->file_rights = 0;
+    second->vfs_proxy = 0;
 
     ipc_ref(idx, 0);
     ipc_ref(idx, 1);
@@ -473,6 +583,8 @@ static uint64_t sys_ipc_send(int fd, const void *user_message, uint64_t len) {
     uint8_t message[IPC_MESSAGE_MAX];
     if (copy_from_user(message, user_message, len) < 0)
         return (uint64_t)-1;
+    if (!vfs_proxy_request_allowed(descriptor, message, len))
+        return (uint64_t)-1;
     int result = ipc_send(descriptor->ipc_idx, descriptor->ipc_endpoint,
                           message, (uint32_t)len);
     if (result > 0) sched_wake_blocked();
@@ -484,7 +596,8 @@ static uint64_t sys_ipc_send_endpoint(int fd, const void *user_message,
                                       uint64_t transfer_rights) {
     task_fd_t *descriptor = fd_used(fd);
     task_fd_t *transfer = fd_used(transfer_fd);
-    if (!descriptor || descriptor->src != TFD_IPC || !transfer ||
+    if (!descriptor || descriptor->src != TFD_IPC ||
+        descriptor->vfs_proxy || !transfer ||
         transfer->src != TFD_IPC ||
         !(descriptor->ipc_rights & IPC_RIGHT_SEND) ||
         !(descriptor->ipc_rights & IPC_RIGHT_DELEGATE) ||
@@ -510,7 +623,8 @@ static uint64_t sys_ipc_send_endpoint(int fd, const void *user_message,
 
 static uint64_t sys_ipc_recv(int fd, void *user_message, uint64_t capacity) {
     task_fd_t *descriptor = fd_used(fd);
-    if (!descriptor || descriptor->src != TFD_IPC || !user_message ||
+    if (!descriptor || descriptor->src != TFD_IPC ||
+        !user_message ||
         !(descriptor->ipc_rights & IPC_RIGHT_RECEIVE) ||
         capacity == 0 || capacity > IPC_MESSAGE_MAX) {
         return (uint64_t)-1;
@@ -533,7 +647,8 @@ static uint64_t sys_ipc_recv_endpoint(int fd, void *user_message,
                                       uint32_t *user_received_rights) {
     task_fd_t *descriptor = fd_used(fd);
     task_t *current = sched_current();
-    if (!descriptor || descriptor->src != TFD_IPC || !user_message ||
+    if (!descriptor || descriptor->src != TFD_IPC ||
+        descriptor->vfs_proxy || !user_message ||
         !(descriptor->ipc_rights & IPC_RIGHT_RECEIVE) ||
         !user_received_fd || !user_received_rights ||
         capacity == 0 || capacity > IPC_MESSAGE_MAX ||
@@ -603,6 +718,7 @@ static uint64_t sys_ipc_send_file(int fd, const void *user_message,
     task_fd_t *descriptor = fd_used(fd);
     task_fd_t *transfer = fd_used(transfer_fd);
     if (!descriptor || descriptor->src != TFD_IPC ||
+        descriptor->vfs_proxy ||
         !(descriptor->ipc_rights & IPC_RIGHT_SEND) ||
         !(descriptor->ipc_rights & IPC_RIGHT_DELEGATE) ||
         !transfer ||
@@ -645,6 +761,7 @@ static uint64_t sys_ipc_recv_file(int fd, void *user_message,
     task_fd_t *descriptor = fd_used(fd);
     task_t *current = sched_current();
     if (!descriptor || descriptor->src != TFD_IPC ||
+        descriptor->vfs_proxy ||
         !(descriptor->ipc_rights & IPC_RIGHT_RECEIVE) || !user_message ||
         !user_received_fd || !user_received_rights || !current ||
         capacity == 0 || capacity > IPC_MESSAGE_MAX) {
@@ -750,10 +867,120 @@ static uint64_t sys_ipc_recv_file(int fd, void *user_message,
     return (uint64_t)result;
 }
 
+static uint64_t sys_ipc_send_vfs(int fd, const void *user_message,
+                                 uint64_t len, int transfer_fd,
+                                 uint64_t transfer_rights) {
+    task_fd_t *descriptor = fd_used(fd);
+    task_fd_t *transfer = fd_used(transfer_fd);
+    if (!descriptor || descriptor->src != TFD_IPC ||
+        descriptor->vfs_proxy ||
+        !(descriptor->ipc_rights & IPC_RIGHT_SEND) ||
+        !(descriptor->ipc_rights & IPC_RIGHT_DELEGATE) ||
+        !transfer || transfer->src != TFD_IPC || !transfer->vfs_proxy ||
+        !(transfer->file_rights & FD_RIGHT_DELEGATE) ||
+        !user_message || len == 0 || len > IPC_MESSAGE_MAX ||
+        transfer_rights == 0 ||
+        (transfer_rights & ~VFS_PROXY_RIGHTS) != 0 ||
+        (transfer_rights & ~transfer->file_rights) != 0) {
+        return (uint64_t)-1;
+    }
+
+    int registered_rights = ipc_vfs_proxy_rights(
+        transfer->ipc_idx, transfer->ipc_endpoint);
+    if (registered_rights < 0 ||
+        (transfer_rights & ~(uint64_t)registered_rights) != 0) {
+        return (uint64_t)-1;
+    }
+
+    uint8_t message[IPC_MESSAGE_MAX];
+    if (copy_from_user(message, user_message, len) < 0)
+        return (uint64_t)-1;
+    int result = ipc_send_vfs(descriptor->ipc_idx,
+                              descriptor->ipc_endpoint, message,
+                              (uint32_t)len, transfer->ipc_idx,
+                              transfer->ipc_endpoint,
+                              (uint8_t)transfer_rights);
+    if (result > 0) sched_wake_blocked();
+    return result < 0 ? (uint64_t)(int64_t)result : (uint64_t)result;
+}
+
+static uint64_t sys_ipc_recv_vfs(int fd, void *user_message,
+                                 uint64_t capacity, int *user_received_fd,
+                                 uint32_t *user_received_rights) {
+    task_fd_t *descriptor = fd_used(fd);
+    task_t *current = sched_current();
+    if (!descriptor || descriptor->src != TFD_IPC ||
+        descriptor->vfs_proxy ||
+        !(descriptor->ipc_rights & IPC_RIGHT_RECEIVE) ||
+        !user_message || !user_received_fd || !user_received_rights ||
+        !current || capacity == 0 || capacity > IPC_MESSAGE_MAX) {
+        return (uint64_t)-1;
+    }
+
+    uint8_t message[IPC_MESSAGE_MAX];
+    int transfer_idx = -1;
+    uint8_t transfer_endpoint = 0;
+    uint8_t transfer_rights = 0;
+    int result = ipc_peek_vfs(descriptor->ipc_idx,
+                              descriptor->ipc_endpoint, message,
+                              (uint32_t)capacity, &transfer_idx,
+                              &transfer_endpoint, &transfer_rights);
+    if (result <= 0) return (uint64_t)(int64_t)result;
+
+    int registered_rights = ipc_vfs_proxy_rights(transfer_idx,
+                                                  transfer_endpoint);
+    if (registered_rights < 0 || transfer_rights == 0 ||
+        (transfer_rights & ~(uint8_t)registered_rights) != 0) {
+        return (uint64_t)-1;
+    }
+
+    int new_fd = -1;
+    for (int candidate = FD_BASE; candidate < TASK_MAX_FDS; candidate++) {
+        if (!current->fds[candidate].used) {
+            new_fd = candidate;
+            break;
+        }
+    }
+    if (new_fd < 0) return (uint64_t)-1;
+
+    uint32_t user_rights = transfer_rights;
+    if (copy_to_user(user_message, message, (uint32_t)result) < 0 ||
+        copy_to_user(user_received_fd, &new_fd, sizeof(new_fd)) < 0 ||
+        copy_to_user(user_received_rights, &user_rights,
+                     sizeof(user_rights)) < 0) {
+        return (uint64_t)-1;
+    }
+
+    int consumed_idx = -1;
+    uint8_t consumed_endpoint = 0;
+    uint8_t consumed_rights = 0;
+    if (!ipc_consume_vfs(descriptor->ipc_idx, descriptor->ipc_endpoint,
+                         &consumed_idx, &consumed_endpoint,
+                         &consumed_rights) ||
+        consumed_idx != transfer_idx ||
+        consumed_endpoint != transfer_endpoint ||
+        consumed_rights != transfer_rights) {
+        if (consumed_idx >= 0) ipc_close(consumed_idx, consumed_endpoint);
+        return (uint64_t)-1;
+    }
+
+    if (task_adopt_ipc_endpoint_at(current, new_fd, transfer_idx,
+                                   transfer_endpoint,
+                                   IPC_RIGHT_SEND | IPC_RIGHT_RECEIVE) < 0) {
+        ipc_close(transfer_idx, transfer_endpoint);
+        return (uint64_t)-1;
+    }
+    current->fds[new_fd].vfs_proxy = 1;
+    current->fds[new_fd].file_rights = transfer_rights;
+    sched_wake_blocked();
+    return (uint64_t)result;
+}
+
 static uint64_t sys_ipc_map(int fd, uint64_t user_va) {
     task_fd_t *descriptor = fd_used(fd);
     task_t *cur = sched_current();
     if (!descriptor || descriptor->src != TFD_IPC ||
+        descriptor->vfs_proxy ||
         !(descriptor->ipc_rights & IPC_RIGHT_MAP) ||
         !cur || !cur->ttbr0_pa) {
         return (uint64_t)-1;
@@ -813,25 +1040,44 @@ static uint64_t sys_brk(uint64_t new_end) {
     if (new_end < USER_HEAP_BASE) new_end = USER_HEAP_BASE;
     if (new_end > USER_HEAP_MAX)  new_end = USER_HEAP_MAX;
 
-    if (new_end <= old_end) {
+    if (new_end == old_end) return old_end;
+
+    uint64_t old_pages_end = (old_end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    uint64_t new_pages_end = (new_end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    if (new_end < old_end) {
+        for (uint64_t va = new_pages_end; va < old_pages_end;
+             va += PAGE_SIZE) {
+            if (!mmu_unmap_user_page(cur->ttbr0_pa, va, cur->asid))
+                return old_end;
+        }
         cur->heap_end = new_end;
         return new_end;
     }
 
-    uint64_t start = (old_end + 0xFFFull) & ~0xFFFull;
-    uint64_t end   = (new_end + 0xFFFull) & ~0xFFFull;
+    uint64_t start = old_pages_end;
+    uint64_t end = new_pages_end;
+    uint64_t va = start;
 
-    for (uint64_t va = start; va < end; va += 0x1000) {
+    for (; va < end; va += PAGE_SIZE) {
         uint8_t *pg = (uint8_t *)phys_alloc_page();
-        if (!pg) {
-            cur->heap_end = va;
-            return va;
-        }
+        if (!pg) goto rollback;
         for (int j = 0; j < (int)PAGE_SIZE; j++) pg[j] = 0;
-        mmu_map_user_page(cur->ttbr0_pa, va, KVA_TO_PA(pg), 0, cur->asid);
+        if (!mmu_map_user_page_prot(cur->ttbr0_pa, va, KVA_TO_PA(pg),
+                                   VM_READ | VM_WRITE, cur->asid)) {
+            phys_free_page(pg);
+            goto rollback;
+        }
     }
     cur->heap_end = new_end;
     return new_end;
+
+rollback:
+    for (uint64_t rollback_va = start; rollback_va < va;
+         rollback_va += PAGE_SIZE) {
+        if (!mmu_unmap_user_page(cur->ttbr0_pa, rollback_va, cur->asid))
+            break;
+    }
+    return old_end;
 }
 
 // ------------------------------------------------------------------
@@ -845,15 +1091,8 @@ static uint64_t sys_exec(uint64_t sp, const char *user_path,
         return (uint64_t)-1;
 
     char kpath[128];
-    int n = 0;
-    for (; n < (int)sizeof(kpath) - 1; n++) {
-        char c;
-        if (copy_from_user(&c, user_path + n, 1) < 0) return (uint64_t)-1;
-        kpath[n] = c;
-        if (c == 0) break;
-    }
-    kpath[sizeof(kpath) - 1] = 0;
-    if (kpath[0] == 0) return (uint64_t)-1;
+    if (!copy_user_string(kpath, user_path, sizeof(kpath)) || kpath[0] == 0)
+        return (uint64_t)-1;
 
     const uint8_t *image_data = 0;
     uint32_t image_size = 0;
@@ -903,24 +1142,47 @@ static uint64_t sys_exec(uint64_t sp, const char *user_path,
     int argc = 0;
 
     if (user_argv) {
+        uintptr_t argv_address = (uintptr_t)user_argv;
+        int argv_valid = 1;
+        int argv_terminated = 0;
         for (; argc < MAX_ARGC; argc++) {
             uint64_t uptr = 0;
-            if (copy_from_user(&uptr, (const char *)user_argv + argc * 8, 8) < 0) break;
-            if (uptr == 0) break;
-
-            char *dst = argv_bufs[argc];
-            int k = 0;
-            for (; k < 127; k++) {
-                char c;
-                if (copy_from_user(&c, (const char *)uptr + k, 1) < 0) {
-                    dst[k] = 0;
-                    break;
-                }
-                dst[k] = c;
-                if (c == 0) break;
+            uintptr_t offset = (uintptr_t)argc * sizeof(uptr);
+            if (argv_address > UINTPTR_MAX - offset ||
+                copy_from_user(&uptr,
+                               (const void *)(argv_address + offset),
+                               sizeof(uptr)) < 0) {
+                argv_valid = 0;
+                break;
             }
-            dst[127] = 0;
-            argv_ptrs[argc] = dst;
+            if (uptr == 0) {
+                argv_terminated = 1;
+                break;
+            }
+            if (!copy_user_string(argv_bufs[argc],
+                                  (const char *)(uintptr_t)uptr,
+                                  sizeof(argv_bufs[argc]))) {
+                argv_valid = 0;
+                break;
+            }
+            argv_ptrs[argc] = argv_bufs[argc];
+        }
+        if (argv_valid && !argv_terminated) {
+            uintptr_t offset = (uintptr_t)MAX_ARGC * sizeof(uint64_t);
+            uint64_t terminator = 1;
+            if (argv_address > UINTPTR_MAX - offset ||
+                copy_from_user(&terminator,
+                               (const void *)(argv_address + offset),
+                               sizeof(terminator)) < 0 ||
+                terminator != 0) {
+                argv_valid = 0;
+            } else {
+                argv_terminated = 1;
+            }
+        }
+        if (!argv_valid || !argv_terminated) {
+            if (allocated_image) kfree(allocated_image);
+            return (uint64_t)-1;
         }
     }
 
@@ -1269,6 +1531,8 @@ static uint64_t sys_recvfrom(int fd, void *user_buf, uint64_t max_len,
         uint8_t *a = (uint8_t *)&sa.sin_addr;
         if (copy_to_user(user_src_ip, a, 4) < 0) return (uint64_t)-1;
     }
+    if (pr->pr_consume && !pr->pr_consume(f, (uint32_t)ret))
+        return (uint64_t)-1;
     return (uint64_t)ret;
 }
 
@@ -1324,9 +1588,10 @@ static uint64_t sys_recv(int fd, void *user_buf, size_t max_len) {
 
     if (max_len > 4096) max_len = 4096;
     uint8_t kbuf[4096];
-    uint32_t got = tcp_recv_data(c, kbuf, (uint32_t)max_len);
+    uint32_t got = tcp_peek_data(c, kbuf, (uint32_t)max_len);
     if (got == 0) return (uint64_t)-2;
     if (copy_to_user(user_buf, kbuf, got) < 0) return (uint64_t)-1;
+    if (!tcp_consume_data(c, got)) return (uint64_t)-1;
     return (uint64_t)got;
 }
 
@@ -1355,13 +1620,7 @@ static uint64_t sys_getegid(void) {
 }
 
 static int copy_user_path(char *dst, const char *user_path, size_t capacity) {
-    if (!user_path || capacity < 2) return 0;
-    for (size_t i = 0; i < capacity - 1; i++) {
-        if (copy_from_user(&dst[i], user_path + i, 1) < 0) return 0;
-        if (dst[i] == 0) return i != 0;
-    }
-    dst[capacity - 1] = 0;
-    return 0;
+    return copy_user_string(dst, user_path, capacity) && dst[0] != 0;
 }
 
 static uint64_t sys_chmod(const char *user_path, uint64_t mode) {
@@ -1466,6 +1725,7 @@ uint64_t syscall_dispatch(uint64_t sp) {
         if (current && current->vfs_backend)
             ret = sys_open((const char *)a0, (int)a1);
     }
+    if (nr == SYS_VFS_FD) ret = sys_vfs_fd((int)a0, (int)a1);
     if (nr == SYS_CLOSE)    ret = sys_close((int)a0);
     if (nr == SYS_FD_RESTRICT) ret = sys_fd_restrict((int)a0, a1);
     if (nr == SYS_BRK)      ret = sys_brk(a0);
@@ -1491,6 +1751,12 @@ uint64_t syscall_dispatch(uint64_t sp) {
     if (nr == SYS_IPC_RECV_FILE)
         ret = sys_ipc_recv_file((int)a0, (void *)a1, a2,
                                 (int *)a3, (uint32_t *)a4);
+    if (nr == SYS_IPC_SEND_VFS)
+        ret = sys_ipc_send_vfs((int)a0, (const void *)a1, a2,
+                               (int)a3, a4);
+    if (nr == SYS_IPC_RECV_VFS)
+        ret = sys_ipc_recv_vfs((int)a0, (void *)a1, a2,
+                               (int *)a3, (uint32_t *)a4);
     if (nr == SYS_DUP2)     ret = sys_dup2((int)a0, (int)a1);
     if (nr == SYS_SOCKET)   ret = sys_socket((int)a0, (int)a1, (int)a2);
     if (nr == SYS_BIND)     ret = sys_bind((int)a0, (uint16_t)a1);

@@ -346,7 +346,7 @@ const unsigned long initrd_size = sizeof(initrd_data);
 
 
 === START OF FILE: ./src/editor.h ===
-// BrainixKernel (BKOS) — editor.h
+// BrainixKernel kernel — editor.h
 #ifndef BKOS_EDITOR_H
 #define BKOS_EDITOR_H
 
@@ -377,7 +377,7 @@ int  editor_save(editor_t *e);
 
 
 === START OF FILE: ./src/blk.h ===
-// BrainixKernel (BKOS) — blk.h
+// BrainixKernel kernel — blk.h
 // virtio-blk: чтение/запись секторов по 512 байт.
 #ifndef BKOS_BLK_H
 #define BKOS_BLK_H
@@ -398,7 +398,7 @@ uint64_t blk_capacity(void);
 
 
 === START OF FILE: ./src/gpu.c ===
-// BrainixKernel (BKOS) — gpu.c
+// BrainixKernel kernel — gpu.c
 // virtio-gpu. TRANSFER делаем только полным экраном — QEMU не поддерживает
 // произвольные partial rect с offset'ом.
 
@@ -676,7 +676,7 @@ void gpu_flush(void) {
 
 
 === START OF FILE: ./src/fb.c ===
-// BrainixKernel (BKOS) — fb.c
+// BrainixKernel kernel — fb.c
 // Framebuffer + AA-примитивы + round rect + darken.
 // fb_draw_char_aa поддерживает bg==0 для прозрачного фона.
 
@@ -1049,7 +1049,7 @@ void fb_flush_dirty(void) {
 
 
 === START OF FILE: ./src/task.h ===
-// BrainixKernel (BKOS) — task.h
+// BrainixKernel kernel — task.h
 #ifndef BKOS_TASK_H
 #define BKOS_TASK_H
 
@@ -1083,7 +1083,7 @@ task_t *task_create_user(const char *name, const void *code, unsigned long code_
 
 
 === START OF FILE: ./src/mouse.c ===
-// BrainixKernel (BKOS) — mouse.c
+// BrainixKernel kernel — mouse.c
 // virtio-tablet. Собирает состояние (x, y, btn) из evdev-событий.
 // Дополнительно: mouse_left_down() для отслеживания удержания кнопки.
 
@@ -1248,7 +1248,7 @@ void mouse_poll(void) {
 
 
 === START OF FILE: ./src/virtio.c ===
-// BrainixKernel (BKOS) — virtio.c
+// BrainixKernel kernel — virtio.c
 // Транспорт virtio-pci (modern). Размер очереди — как предлагает устройство.
 
 #include <stdint.h>
@@ -1427,7 +1427,7 @@ void virtio_queue_notify(const virtio_mmio_t *io, const virtqueue_t *vq) {
 
 
 === START OF FILE: ./src/sched.c ===
-// BrainixKernel (BKOS) — sched.c
+// BrainixKernel kernel — sched.c
 // Round-robin. Переключение — возврат нового frame SP в asm.
 // BLOCKED-задачи пропускаются в pick_next, DEAD — тоже.
 
@@ -1495,7 +1495,7 @@ task_t *sched_current(void) { return g_current; }
 
 
 === START OF FILE: ./src/kernel.c ===
-// BrainixKernel (BKOS) — kernel.c
+// BrainixKernel kernel — kernel.c
 // Шаг 30: иконки на рабочем столе + смена обоев.
 
 #include <stdint.h>
@@ -1827,7 +1827,7 @@ void kwin_cmd_help(win_t *w) {
 }
 
 void kwin_cmd_ver(win_t *w) {
-    win_puts(w, "BrainixKernel OS v0.30");
+    win_puts(w, "BrainixKernel kernel v0.30");
     win_puts(w, "desktop icons + wallpapers");
 }
 
@@ -2240,7 +2240,7 @@ static void on_key(char c) {
 
 void kernel_main(uint64_t dtb) {
     uart_puts("\033[?2004l");
-    uart_puts("BrainixKernel (BKOS) booted successfully!\n");
+    uart_puts("BrainixKernel kernel booted successfully!\n");
     uart_puts("Welcome to your own OS.\n");
 
     uart_puts("[step 7] DTB at "); uart_puthex(dtb); uart_puts("\n");
@@ -2308,7 +2308,7 @@ void kernel_main(uint64_t dtb) {
 
     uart_puts("[step 30] create ksh window\n");
     win_init(&g_term);
-    win_puts(&g_term, "BrainixKernel OS v0.30");
+    win_puts(&g_term, "BrainixKernel kernel v0.30");
     win_puts(&g_term, "Desktop icons on the left.");
     win_puts(&g_term, "");
     win_puts(&g_term, "Double-click icons to open.");
@@ -2353,7 +2353,7 @@ void kernel_main(uint64_t dtb) {
 
 
 === START OF FILE: ./src/startmenu.h ===
-// BrainixKernel (BKOS) — startmenu.h
+// BrainixKernel kernel — startmenu.h
 #ifndef BKOS_STARTMENU_H
 #define BKOS_STARTMENU_H
 
@@ -2382,7 +2382,7 @@ void system_reboot(void);
 
 
 === START OF FILE: ./src/heap.c ===
-// BrainixKernel (BKOS) — heap.c
+// BrainixKernel kernel — heap.c
 // Шаг 5: slab-аллокатор поверх physmem
 //
 // Идея: фиксированные бакеты, страницы нарезаются на объекты.
@@ -2489,7 +2489,7 @@ void kfree(void *ptr) {
 
 
 === START OF FILE: ./src/rtc.c ===
-// BrainixKernel (BKOS) — rtc.c
+// BrainixKernel kernel — rtc.c
 // PL031 RTC на QEMU virt. Читает Unix seconds и конвертирует в Y-M-D H:M:S.
 
 #include <stdint.h>
@@ -2572,7 +2572,7 @@ void rtc_format_full_utc3(char *buf, int max) {
 
 
 === START OF FILE: ./src/physmem.c ===
-// BrainixKernel (BKOS) — physmem.c
+// BrainixKernel kernel — physmem.c
 // Шаг 7: bitmap-аллокатор, банки RAM берутся из DTB.
 // Шаг 8: phys_alloc_pages() для многостраничных блоков (стеки задач).
 
@@ -2739,7 +2739,7 @@ uint64_t physmem_free_pages(void) {
 
 
 === START OF FILE: ./src/bkfs.c ===
-// BrainixKernel (BKOS) — bkfs.c
+// BrainixKernel kernel — bkfs.c
 // Реализация BKFS. 512-байтные блоки, 256 inode, прямые блоки.
 // Без libc: структурные копии делаются вручную.
 
@@ -3063,7 +3063,7 @@ int bkfs_list(int idx, char *name_out, uint32_t name_max, uint32_t *size_out) {
 
 
 === START OF FILE: ./src/desktop.c ===
-// BrainixKernel (BKOS) — desktop.c
+// BrainixKernel kernel — desktop.c
 // Иконки рабочего стола: Computer, Recycle, Terminal, Files, Editor.
 
 #include <stdint.h>
@@ -3157,7 +3157,7 @@ void desktop_draw(void) {
 
 
 === START OF FILE: ./src/wallpaper.h ===
-// BrainixKernel (BKOS) — wallpaper.h
+// BrainixKernel kernel — wallpaper.h
 #ifndef BKOS_WALLPAPER_H
 #define BKOS_WALLPAPER_H
 
@@ -3175,7 +3175,7 @@ void wallpaper_draw(void);
 
 
 === START OF FILE: ./src/files.c ===
-// BrainixKernel (BKOS) — files.c
+// BrainixKernel kernel — files.c
 // Простой файловый менеджер: список файлов BKFS, навигация стрелками,
 // Delete удаляет выделенный, Enter "открывает" (пока просто статус).
 
@@ -3353,7 +3353,7 @@ void files_key(files_t *f, char c) {
 
 
 === START OF FILE: ./src/pci.c ===
-// BrainixKernel (BKOS) — pci.c
+// BrainixKernel kernel — pci.c
 // Общие PCI helpers. Добавлен pci_find_device_nth.
 
 #include <stdint.h>
@@ -3472,7 +3472,7 @@ int pci_parse_virtio_caps(uint64_t ecam, int b, int d, int f, virtio_mmio_t *out
 
 
 === START OF FILE: ./src/kbd.h ===
-// BrainixKernel (BKOS) — kbd.h
+// BrainixKernel kernel — kbd.h
 #ifndef BKOS_KBD_H
 #define BKOS_KBD_H
 
@@ -3492,7 +3492,7 @@ void kbd_poll(void);
 
 
 === START OF FILE: ./src/icons.h ===
-// BrainixKernel (BKOS) — icons.h
+// BrainixKernel kernel — icons.h
 #ifndef BKOS_ICONS_H
 #define BKOS_ICONS_H
 
@@ -3512,7 +3512,7 @@ void icon_draw_recycle (int x, int y, int selected);
 
 
 === START OF FILE: ./src/initrd.c ===
-// BrainixKernel (BKOS) — initrd.c
+// BrainixKernel kernel — initrd.c
 // Разбор вкомпилированного образа. Формат — см. scripts/mkinitrd.py.
 
 #include <stdint.h>
@@ -3585,7 +3585,7 @@ const initrd_file_t *initrd_find(const char *name) {
 
 
 === START OF FILE: ./src/dtb.h ===
-// BrainixKernel (BKOS) — dtb.h
+// BrainixKernel kernel — dtb.h
 #ifndef BKOS_DTB_H
 #define BKOS_DTB_H
 
@@ -3623,7 +3623,7 @@ int dtb_get_pci_ecam(pci_ecam_t *out);
 
 
 === START OF FILE: ./src/mmu.h ===
-// BrainixKernel (BKOS) — mmu.h
+// BrainixKernel kernel — mmu.h
 #ifndef BKOS_MMU_H
 #define BKOS_MMU_H
 
@@ -3642,7 +3642,7 @@ void mmu_user_map_page(uint64_t pa, int is_code);
 
 
 === START OF FILE: ./src/font8x8.h ===
-// BrainixKernel (BKOS) — font8x8.h
+// BrainixKernel kernel — font8x8.h
 // 8×8 растровый ASCII-шрифт, покрывает 0x20..0x7F (96 символов).
 // Каждый символ — 8 байт, один байт = одна строка, MSB слева.
 #ifndef BKOS_FONT8X8_H
@@ -3657,7 +3657,7 @@ extern const uint8_t font8x8_basic[96][8];
 
 
 === START OF FILE: ./src/ksh.h ===
-// BrainixKernel (BKOS) — ksh.h
+// BrainixKernel kernel — ksh.h
 // KernelShell: буфер вывода user-программ.
 #ifndef BKOS_KSH_H
 #define BKOS_KSH_H
@@ -3681,7 +3681,7 @@ void ksh_out_flush_partial(void);
 
 
 === START OF FILE: ./src/syscall.c ===
-// BrainixKernel (BKOS) — syscall.c
+// BrainixKernel kernel — syscall.c
 // Диспетчер syscall. Если задача помечена to_window, то write(1,...)
 // уходит в ksh-буфер, откуда его читает окно.
 
@@ -3846,7 +3846,7 @@ uint64_t syscall_dispatch(uint64_t sp) {
 
 
 === START OF FILE: ./src/wm.c ===
-// BrainixKernel (BKOS) — wm.c
+// BrainixKernel kernel — wm.c
 // Оконный менеджер: скруглённые углы, мягкая тень, градиентный заголовок.
 
 #include <stdint.h>
@@ -4137,7 +4137,7 @@ int wm_hit_resize(int x, int y) {
 
 
 === START OF FILE: ./src/win.c ===
-// BrainixKernel (BKOS) — win.c
+// BrainixKernel kernel — win.c
 // ksh: контент без рамки. Команда wallpaper меняет обои.
 
 #include <stdint.h>
@@ -4640,7 +4640,7 @@ void win_key(win_t *w, char c) {
 
 
 === START OF FILE: ./src/mouse.h ===
-// BrainixKernel (BKOS) — mouse.h
+// BrainixKernel kernel — mouse.h
 #ifndef BKOS_MOUSE_H
 #define BKOS_MOUSE_H
 
@@ -4662,7 +4662,7 @@ int  mouse_left_down(void);      // 1 = удерживается сейчас
 
 
 === START OF FILE: ./src/task.c ===
-// BrainixKernel (BKOS) — task.c
+// BrainixKernel kernel — task.c
 // Создание задач. Добавлено поле to_window.
 
 #include <stdint.h>
@@ -4761,7 +4761,7 @@ task_t *task_create_user(const char *name, const void *code, unsigned long code_
 
 
 === START OF FILE: ./src/virtio.h ===
-// BrainixKernel (BKOS) — virtio.h
+// BrainixKernel kernel — virtio.h
 #ifndef BKOS_VIRTIO_H
 #define BKOS_VIRTIO_H
 
@@ -4847,7 +4847,7 @@ void virtio_queue_notify(const virtio_mmio_t *io, const virtqueue_t *vq);
 
 
 === START OF FILE: ./src/_start.s ===
-// BrainixKernel (BKOS) — boot stub + vectors + jump_to_frame.
+// BrainixKernel kernel — boot stub + vectors + jump_to_frame.
 // Фрейм: 0x120 байт (x0..x30, ELR, SPSR, SP_EL0).
 
 .section .text
@@ -5018,7 +5018,7 @@ stack_top:
 
 
 === START OF FILE: ./src/fb.h ===
-// BrainixKernel (BKOS) — fb.h
+// BrainixKernel kernel — fb.h
 #ifndef BKOS_FB_H
 #define BKOS_FB_H
 
@@ -5067,7 +5067,7 @@ void fb_flush_dirty(void);
 
 
 === START OF FILE: ./src/gpu.h ===
-// BrainixKernel (BKOS) — gpu.h
+// BrainixKernel kernel — gpu.h
 #ifndef BKOS_GPU_H
 #define BKOS_GPU_H
 
@@ -5084,7 +5084,7 @@ void gpu_flush(void);
 
 
 === START OF FILE: ./src/editor.c ===
-// BrainixKernel (BKOS) — editor.c
+// BrainixKernel kernel — editor.c
 // Контент без рамки (рамку рисует WM).
 
 #include <stdint.h>
@@ -5284,7 +5284,7 @@ void editor_key(editor_t *e, char c) {
 
 
 === START OF FILE: ./src/font8x16_aa.h ===
-// BrainixKernel (BKOS) — font8x16_aa.h
+// BrainixKernel kernel — font8x16_aa.h
 #ifndef BKOS_FONT8X16_AA_H
 #define BKOS_FONT8X16_AA_H
 
@@ -5297,7 +5297,7 @@ extern const uint16_t font8x16_aa[96][16];
 
 
 === START OF FILE: ./src/blk.c ===
-// BrainixKernel (BKOS) — blk.c
+// BrainixKernel kernel — blk.c
 // Драйвер virtio-blk. Один request queue, синхронные запросы.
 // Каждый запрос — 3 дескриптора: header + data + status.
 
@@ -5452,7 +5452,7 @@ int blk_write_sector(uint64_t sector, const void *buf) {
 
 
 === START OF FILE: ./src/desktop.h ===
-// BrainixKernel (BKOS) — desktop.h
+// BrainixKernel kernel — desktop.h
 #ifndef BKOS_DESKTOP_H
 #define BKOS_DESKTOP_H
 
@@ -5484,7 +5484,7 @@ void desktop_draw(void);
 
 
 === START OF FILE: ./src/bkfs.h ===
-// BrainixKernel (BKOS) — bkfs.h
+// BrainixKernel kernel — bkfs.h
 // Простая файловая система на секторах virtio-blk.
 #ifndef BKOS_BKFS_H
 #define BKOS_BKFS_H
@@ -5515,7 +5515,7 @@ int  bkfs_list(int idx, char *name_out, uint32_t name_max, uint32_t *size_out);
 
 
 === START OF FILE: ./src/wallpaper.c ===
-// BrainixKernel (BKOS) — wallpaper.c
+// BrainixKernel kernel — wallpaper.c
 // Пресеты обоев рабочего стола (вертикальные градиенты).
 
 #include <stdint.h>
@@ -5582,7 +5582,7 @@ void wallpaper_draw(void) {
 
 
 === START OF FILE: ./src/physmem.h ===
-// BrainixKernel (BKOS) — physmem.h
+// BrainixKernel kernel — physmem.h
 #ifndef BKOS_PHYSMEM_H
 #define BKOS_PHYSMEM_H
 
@@ -5609,7 +5609,7 @@ uint64_t physmem_free_pages(void);
 
 
 === START OF FILE: ./src/rtc.h ===
-// BrainixKernel (BKOS) — rtc.h
+// BrainixKernel kernel — rtc.h
 #ifndef BKOS_RTC_H
 #define BKOS_RTC_H
 
@@ -5631,7 +5631,7 @@ void rtc_format_full_utc3(char *buf, int max);
 
 
 === START OF FILE: ./src/sched.h ===
-// BrainixKernel (BKOS) — sched.h
+// BrainixKernel kernel — sched.h
 #ifndef BKOS_SCHED_H
 #define BKOS_SCHED_H
 
@@ -5651,7 +5651,7 @@ void sched_wake_blocked(void);
 
 
 === START OF FILE: ./src/heap.h ===
-// BrainixKernel (BKOS) — heap.h
+// BrainixKernel kernel — heap.h
 #ifndef BKOS_HEAP_H
 #define BKOS_HEAP_H
 
@@ -5674,7 +5674,7 @@ void  kfree(void *ptr);
 
 
 === START OF FILE: ./src/startmenu.c ===
-// BrainixKernel (BKOS) — startmenu.c
+// BrainixKernel kernel — startmenu.c
 // Меню «Пуск» с живыми кнопками: 3D-иконки, hover, подписи, стрелки.
 
 #include <stdint.h>
@@ -5856,7 +5856,7 @@ void system_reboot(void) {
 
 
 === START OF FILE: ./src/initrd.h ===
-// BrainixKernel (BKOS) — initrd.h
+// BrainixKernel kernel — initrd.h
 // Чтение файлов, вкомпилированных в образ ядра.
 #ifndef BKOS_INITRD_H
 #define BKOS_INITRD_H
@@ -5881,7 +5881,7 @@ const initrd_file_t *initrd_find(const char *name);
 
 
 === START OF FILE: ./src/icons.c ===
-// BrainixKernel (BKOS) — icons.c
+// BrainixKernel kernel — icons.c
 // Иконки без фона.
 
 #include <stdint.h>
@@ -6014,7 +6014,7 @@ void icon_draw_recycle(int x, int y, int selected) {
 
 
 === START OF FILE: ./src/kbd.c ===
-// BrainixKernel (BKOS) — kbd.c
+// BrainixKernel kernel — kbd.c
 // virtio-keyboard + отслеживание Ctrl для спец-кодов.
 // 0x11 UP, 0x12 DOWN, 0x13 LEFT, 0x14 RIGHT, 0x15 HOME, 0x16 END, 0x17 DEL,
 // 0x18 CTRL+S, 0x19 CTRL+Q.
@@ -6281,7 +6281,7 @@ void kbd_poll(void) {
 
 
 === START OF FILE: ./src/pci.h ===
-// BrainixKernel (BKOS) — pci.h
+// BrainixKernel kernel — pci.h
 #ifndef BKOS_PCI_H
 #define BKOS_PCI_H
 
@@ -6312,7 +6312,7 @@ int      pci_parse_virtio_caps(uint64_t ecam, int b, int d, int f, virtio_mmio_t
 
 
 === START OF FILE: ./src/files.h ===
-// BrainixKernel (BKOS) — files.h
+// BrainixKernel kernel — files.h
 // Приложение "Files": листинг файлов BKFS с навигацией и удалением.
 #ifndef BKOS_FILES_H
 #define BKOS_FILES_H
@@ -6341,7 +6341,7 @@ void files_key(files_t *f, char c);
 
 
 === START OF FILE: ./src/win.h ===
-// BrainixKernel (BKOS) — win.h
+// BrainixKernel kernel — win.h
 #ifndef BKOS_WIN_H
 #define BKOS_WIN_H
 
@@ -6377,7 +6377,7 @@ void win_key(win_t *w, char c);
 
 
 === START OF FILE: ./src/wm.h ===
-// BrainixKernel (BKOS) — wm.h
+// BrainixKernel kernel — wm.h
 #ifndef BKOS_WM_H
 #define BKOS_WM_H
 
@@ -6431,7 +6431,7 @@ void wm_set_title(int idx, const char *title);
 
 
 === START OF FILE: ./src/syscall.h ===
-// BrainixKernel (BKOS) — syscall.h
+// BrainixKernel kernel — syscall.h
 #ifndef BKOS_SYSCALL_H
 #define BKOS_SYSCALL_H
 
@@ -6451,7 +6451,7 @@ uint64_t syscall_dispatch(uint64_t sp);
 
 
 === START OF FILE: ./src/ksh.c ===
-// BrainixKernel (BKOS) — ksh.c
+// BrainixKernel kernel — ksh.c
 // Кольцевой буфер вывода для user-программ, работающих в окне.
 
 #include <stdint.h>
@@ -6504,7 +6504,7 @@ void ksh_out_flush_partial(void) {
 
 
 === START OF FILE: ./src/font8x8.c ===
-// BrainixKernel (BKOS) — font8x8.c
+// BrainixKernel kernel — font8x8.c
 // Публичный домен, классический 8×8 ASCII (0x20..0x7F).
 
 #include <stdint.h>
@@ -6612,7 +6612,7 @@ const uint8_t font8x8_basic[96][8] = {
 
 
 === START OF FILE: ./src/mmu.c ===
-// BrainixKernel (BKOS) — mmu.c
+// BrainixKernel kernel — mmu.c
 // Шаг 13h: L3 расширен с 2 MB до 64 MB. Теперь user code/stack
 // и любые user-маппинги в первых 64 MB RAM работают.
 
@@ -6774,7 +6774,7 @@ void mmu_user_map_page(uint64_t pa, int is_code) {
 
 
 === START OF FILE: ./src/dtb.c ===
-// BrainixKernel (BKOS) — dtb.c
+// BrainixKernel kernel — dtb.c
 // FDT-парсер: RAM banks + framebuffer + PCIe ECAM.
 // Поиск PCIe ECAM ведём по compatible = "pci-host-ecam-generic",
 // а не по имени узла: QEMU называет его "pcie@...", не "pci@...".

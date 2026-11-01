@@ -1,4 +1,4 @@
-/* BrainixKernel (BKOS) — linker script
+/* BrainixKernel — linker script
  *
  * Двухсекционная схема:
  *

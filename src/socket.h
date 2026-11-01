@@ -37,5 +37,7 @@ socket_t *sock_find_by_port(uint16_t port_be);
 // Положить входящий пакет в очередь. Возвращает 1 при успехе.
 int  sock_push_rx(socket_t *s, const uint8_t *src_ip, uint16_t src_port_be,
                   const uint8_t *data, uint16_t len);
+int  sock_peek_rx(socket_t *s, void *buf, uint32_t max_len);
+int  sock_consume_rx(socket_t *s);
 
 #endif

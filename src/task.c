@@ -46,6 +46,7 @@ static void fds_init(task_fd_t *fds) {
         fds[i].ipc_endpoint = 0;
         fds[i].ipc_rights = 0;
         fds[i].file_rights = 0;
+        fds[i].vfs_proxy = 0;
     }
 }
 
@@ -115,6 +116,7 @@ static void task_set_ipc_descriptor(task_fd_t *descriptor, int ipc_idx,
     descriptor->ipc_endpoint = endpoint;
     descriptor->ipc_rights = IPC_RIGHT_ALL;
     descriptor->file_rights = 0;
+    descriptor->vfs_proxy = 0;
 }
 
 int task_install_ipc_endpoint(task_t *task, int ipc_idx, uint8_t endpoint,
@@ -165,6 +167,7 @@ void task_fd_release(task_fd_t *fd) {
     fd->ipc_endpoint = 0;
     fd->ipc_rights = 0;
     fd->file_rights = 0;
+    fd->vfs_proxy = 0;
 }
 
 void task_destroy(task_t *t) {

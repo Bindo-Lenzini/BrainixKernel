@@ -275,6 +275,136 @@ int main(void) {
     passed &= check(active_pages() == 0,
                     "discarding a channel releases queued endpoint references");
 
+    int vfs_carrier = ipc_alloc();
+    int vfs_proxy = ipc_alloc();
+    if (vfs_carrier < 0 || vfs_proxy < 0) {
+        fprintf(stderr, "FAIL: VFS-capability fixture allocation\n");
+        return 1;
+    }
+    ipc_ref(vfs_carrier, 0);
+    ipc_ref(vfs_carrier, 1);
+    ipc_ref(vfs_proxy, 0);
+    ipc_ref(vfs_proxy, 1);
+    passed &= check(ipc_register_vfs_proxy(
+                        vfs_proxy, 0,
+                        IPC_FILE_RIGHT_READ | IPC_FILE_RIGHT_WRITE |
+                            IPC_FILE_RIGHT_DELEGATE) == 0 &&
+                    ipc_vfs_proxy_rights(vfs_proxy, 1) ==
+                        (IPC_FILE_RIGHT_READ | IPC_FILE_RIGHT_WRITE |
+                         IPC_FILE_RIGHT_DELEGATE) &&
+                    ipc_register_vfs_proxy(vfs_proxy, 0,
+                                           IPC_FILE_RIGHT_READ) == -1,
+                    "VFS registration grants only its peer endpoint and cannot broaden");
+    passed &= check(ipc_send_vfs(vfs_carrier, 0, transfer_payload,
+                                 sizeof(transfer_payload), vfs_proxy, 1,
+                                 IPC_FILE_RIGHT_READ) ==
+                        (int)sizeof(transfer_payload),
+                    "message can carry a restricted VFS proxy");
+    passed &= check(ipc_send_vfs(vfs_carrier, 0, transfer_payload,
+                                 sizeof(transfer_payload), vfs_proxy, 1, 0) ==
+                        -1 &&
+                    ipc_send_vfs(vfs_carrier, 0, transfer_payload,
+                                 sizeof(transfer_payload), vfs_proxy, 1,
+                                 IPC_FILE_RIGHT_ALL + 1) == -1 &&
+                    ipc_send_vfs(vfs_proxy, 0, transfer_payload,
+                                 sizeof(transfer_payload), vfs_carrier, 1,
+                                 IPC_FILE_RIGHT_READ) == -1,
+                    "VFS delegation rejects invalid rights and transfer cycles");
+    uintptr_t vfs_received_file = 0;
+    uint32_t vfs_received_offset = 0;
+    uint8_t vfs_received_file_rights = 0;
+    int vfs_received_inode = -1;
+    uint32_t vfs_received_inode_offset = 0;
+    uint8_t vfs_received_inode_rights = 0;
+    passed &= check(ipc_peek(vfs_carrier, 1, received, sizeof(received)) == -1 &&
+                    ipc_peek_endpoint(vfs_carrier, 1, received,
+                                      sizeof(received), &transferred_idx,
+                                      &transferred_endpoint,
+                                      &transferred_rights) == -1 &&
+                    ipc_peek_initrd(vfs_carrier, 1, received,
+                                    sizeof(received), &vfs_received_file,
+                                    &vfs_received_offset,
+                                    &vfs_received_file_rights) == -1 &&
+                    ipc_peek_bkfs(vfs_carrier, 1, received,
+                                  sizeof(received), &vfs_received_inode,
+                                  &vfs_received_inode_offset,
+                                  &vfs_received_inode_rights) == -1 &&
+                    ipc_consume_endpoint(vfs_carrier, 1, &transferred_idx,
+                                         &transferred_endpoint,
+                                         &transferred_rights) == 0 &&
+                    ipc_peek_vfs(vfs_carrier, 1, received, sizeof(received),
+                                 &transferred_idx, &transferred_endpoint,
+                                 &transferred_rights) ==
+                        (int)sizeof(transfer_payload) &&
+                    transferred_idx == vfs_proxy &&
+                    transferred_endpoint == 1 &&
+                    transferred_rights == IPC_FILE_RIGHT_READ,
+                    "generic endpoint/file APIs cannot consume VFS proxy transfers");
+    ipc_close(vfs_proxy, 0);
+    ipc_close(vfs_proxy, 1);
+    passed &= check(ipc_consume_vfs(vfs_carrier, 1, &transferred_idx,
+                                    &transferred_endpoint,
+                                    &transferred_rights) &&
+                    transferred_idx == vfs_proxy &&
+                    transferred_endpoint == 1 &&
+                    transferred_rights == IPC_FILE_RIGHT_READ &&
+                    ipc_vfs_proxy_rights(transferred_idx,
+                                         transferred_endpoint) ==
+                        (IPC_FILE_RIGHT_READ | IPC_FILE_RIGHT_WRITE |
+                         IPC_FILE_RIGHT_DELEGATE),
+                    "consuming VFS capability transfers queued endpoint reference");
+    ipc_close(transferred_idx, transferred_endpoint);
+    ipc_close(vfs_carrier, 0);
+    ipc_close(vfs_carrier, 1);
+    passed &= check(active_pages() == 0,
+                    "VFS capability endpoint is released after final close");
+
+    int vfs_cleanup_carrier = ipc_alloc();
+    int vfs_cleanup_proxy = ipc_alloc();
+    if (vfs_cleanup_carrier < 0 || vfs_cleanup_proxy < 0) {
+        fprintf(stderr, "FAIL: VFS cleanup fixture allocation\n");
+        return 1;
+    }
+    ipc_ref(vfs_cleanup_carrier, 0);
+    ipc_ref(vfs_cleanup_carrier, 1);
+    ipc_ref(vfs_cleanup_proxy, 0);
+    ipc_ref(vfs_cleanup_proxy, 1);
+    passed &= check(ipc_register_vfs_proxy(vfs_cleanup_proxy, 0,
+                                           IPC_FILE_RIGHT_READ) == 0 &&
+                    ipc_send_vfs(vfs_cleanup_carrier, 0, request,
+                                 sizeof(request), vfs_cleanup_proxy, 1,
+                                 IPC_FILE_RIGHT_READ) ==
+                        (int)sizeof(request),
+                    "queued VFS proxy retains its channel endpoint");
+    ipc_close(vfs_cleanup_proxy, 0);
+    ipc_close(vfs_cleanup_proxy, 1);
+    ipc_close(vfs_cleanup_carrier, 0);
+    ipc_close(vfs_cleanup_carrier, 1);
+    passed &= check(active_pages() == 0,
+                    "discarding queued VFS proxy releases endpoint and page");
+
+    int vfs_failed_service = ipc_alloc();
+    if (vfs_failed_service < 0) {
+        fprintf(stderr, "FAIL: VFS service-failure fixture allocation\n");
+        return 1;
+    }
+    ipc_ref(vfs_failed_service, 0);
+    ipc_ref(vfs_failed_service, 1);
+    passed &= check(ipc_register_vfs_proxy(vfs_failed_service, 0,
+                                           IPC_FILE_RIGHT_READ) == 0,
+                    "VFS service endpoint can register a client capability");
+    ipc_close(vfs_failed_service, 0);
+    passed &= check(ipc_vfs_proxy_rights(vfs_failed_service, 1) ==
+                        IPC_FILE_RIGHT_READ &&
+                    ipc_send(vfs_failed_service, 1, request,
+                             sizeof(request)) == -1 &&
+                    ipc_peek(vfs_failed_service, 1, received,
+                             sizeof(received)) == 0,
+                    "closed VFS service fails closed for existing client endpoint");
+    ipc_close(vfs_failed_service, 1);
+    passed &= check(active_pages() == 0,
+                    "closed VFS service channel releases after client closes");
+
     int file_carrier = ipc_alloc();
     if (file_carrier < 0) {
         fprintf(stderr, "FAIL: file-capability fixture allocation\n");

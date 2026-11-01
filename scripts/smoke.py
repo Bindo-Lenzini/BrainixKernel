@@ -63,6 +63,7 @@ def main():
         args.qemu,
         "-M", "virt,gic-version=2",
         "-cpu", "cortex-a72",
+        "-smp", "1",
         # Keep the headless CI guest lightweight; the graphical VM uses 2 GiB.
         "-m", "512M",
         "-device", "virtio-gpu-pci",
@@ -173,7 +174,7 @@ def main():
                         process.returncode
                     ))
                     return 7
-                print("SMOKE_OK: boot, user-space VFS broker, file capability transfer and attenuation, least-authority console IPC, endpoint rights and delegation, kernel selftests, credentials, user access and COW passed")
+                print("SMOKE_OK: boot, VFS proxy I/O and capability transfer, least-authority console IPC, endpoint rights and delegation, kernel selftests, credentials, user access and COW passed")
                 return 0
 
             if process.poll() is not None:

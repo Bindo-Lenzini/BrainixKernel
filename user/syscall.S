@@ -1,10 +1,12 @@
 // BrainixKernel — user/syscall.S
 .section .text
 
-.global write
-.global read
+.global read_backend
 .global exit
+.global write_backend
+.global close_backend
 .global open_backend
+.global vfs_fd_control
 .global close
 .global fd_restrict
 .global yield
@@ -24,6 +26,8 @@
 .global ipc_recv_endpoint
 .global ipc_send_file
 .global ipc_recv_file
+.global ipc_send_vfs
+.global ipc_recv_vfs
 .global ipc_map
 .global dup2
 .global socket
@@ -38,12 +42,12 @@
 .global getgroups
 .global setgroups
 
-write:
+write_backend:
     mov x8, #0
     svc #0
     ret
 
-read:
+read_backend:
     mov x8, #3
     svc #0
     ret
@@ -58,7 +62,17 @@ open_backend:
     svc #0
     ret
 
+vfs_fd_control:
+    mov x8, #41
+    svc #0
+    ret
+
 close:
+    mov x8, #5
+    svc #0
+    ret
+
+close_backend:
     mov x8, #5
     svc #0
     ret
@@ -150,6 +164,16 @@ ipc_send_file:
 
 ipc_recv_file:
     mov x8, #39
+    svc #0
+    ret
+
+ipc_send_vfs:
+    mov x8, #42
+    svc #0
+    ret
+
+ipc_recv_vfs:
+    mov x8, #43
     svc #0
     ret
 

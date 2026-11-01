@@ -99,4 +99,7 @@ void net_set_ip(ipv4_t ip);
 void net_set_gateway(ipv4_t gw);
 void net_set_netmask(ipv4_t mask);
 
+int net_ipv4_packet_view(const uint8_t *frame, uint32_t frame_len,
+                         const uint8_t **out_iph, uint32_t *out_ip_len);
+
 #endif

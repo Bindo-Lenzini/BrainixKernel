@@ -23,6 +23,8 @@ void pipe_close_write(int idx);
 //   > 0 — прочитано
 //   = 0 — EOF (нет данных и нет писателей)
 //   < 0 — EAGAIN (нет данных, писатели ещё живы)
+int  pipe_peek(int idx, void *buf, uint32_t max);
+int  pipe_consume(int idx, uint32_t len);
 int  pipe_read(int idx, void *buf, uint32_t max);
 
 // Пишет до len байт.

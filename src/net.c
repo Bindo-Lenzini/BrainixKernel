@@ -66,6 +66,7 @@ uint8_t *net_build_eth(uint8_t *frame,
     eth->ethertype = htons16(ethertype);
     return frame + 14;
 }
+
 // ============================================================
 // UDP send.
 // ============================================================
@@ -162,11 +163,10 @@ void net_poll(void) {
         }
 
         if (etype == ETH_TYPE_IPV4) {
-            if (flen < 14 + 20) continue;
-            const uint8_t *iph = frame + 14;
+            const uint8_t *iph;
+            uint32_t ip_len;
+            if (!net_ipv4_packet_view(frame, flen, &iph, &ip_len)) continue;
             uint8_t proto = iph[9];
-            uint32_t ip_len = ((uint32_t)iph[2] << 8) | iph[3];
-            if (ip_len > flen - 14) ip_len = flen - 14;
 
             if (proto == 1) {
                 icmp_handle_frame(frame, flen);

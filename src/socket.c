@@ -47,7 +47,7 @@ socket_t *sock_find_by_port(uint16_t port_be) {
 int sock_push_rx(socket_t *s, const uint8_t *src_ip, uint16_t src_port_be,
                  const uint8_t *data, uint16_t len)
 {
-    if (!s) return 0;
+    if (!s || !src_ip || (!data && len != 0)) return 0;
     int next = (s->rx_tail + 1) % SOCK_RX_QUEUE;
     if (next == s->rx_head) return 0;   // очередь полна
 
@@ -57,5 +57,23 @@ int sock_push_rx(socket_t *s, const uint8_t *src_ip, uint16_t src_port_be,
     p->len = len > SOCK_BUF_SIZE ? SOCK_BUF_SIZE : len;
     for (uint16_t i = 0; i < p->len; i++) p->data[i] = data[i];
     s->rx_tail = next;
+    return 1;
+}
+
+int sock_peek_rx(socket_t *s, void *buf, uint32_t max_len) {
+    if (!s || !s->used) return -1;
+    if (s->rx_head == s->rx_tail) return 0;
+
+    sock_pkt_t *packet = &s->rx[s->rx_head];
+    uint32_t copy_len = packet->len < max_len ? packet->len : max_len;
+    if (copy_len != 0 && !buf) return -1;
+    for (uint32_t i = 0; i < copy_len; i++)
+        ((uint8_t *)buf)[i] = packet->data[i];
+    return (int)copy_len;
+}
+
+int sock_consume_rx(socket_t *s) {
+    if (!s || !s->used || s->rx_head == s->rx_tail) return 0;
+    s->rx_head = (s->rx_head + 1) % SOCK_RX_QUEUE;
     return 1;
 }

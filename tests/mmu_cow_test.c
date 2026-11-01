@@ -11,11 +11,14 @@
 #define PTE_SW_COW      (1ull << 55)
 #define PTE_SW_SHARED   (1ull << 56)
 #define PTE_AP_USER_RW  (1ull << 6)
+#define PTE_UXN         (1ull << 54)
 #define PTE_PA_MASK     0x0000FFFFFFFFF000ULL
 
 typedef struct {
     uint8_t *address;
     uint16_t refs;
+    uint16_t writable_mappings;
+    uint16_t executable_mappings;
 } test_page_t;
 
 static test_page_t pages[TEST_PAGE_LIMIT];
@@ -35,6 +38,8 @@ void *phys_alloc_page(void) {
         memset(page, 0, PAGE_SIZE);
         pages[i].address = page;
         pages[i].refs = 1;
+        pages[i].writable_mappings = 0;
+        pages[i].executable_mappings = 0;
         return page;
     }
     return NULL;
@@ -46,9 +51,13 @@ void phys_free_page(void *address) {
         if (pages[i].refs > 1) {
             pages[i].refs--;
         } else {
+            if (pages[i].writable_mappings ||
+                pages[i].executable_mappings) return;
             free(pages[i].address);
             pages[i].address = NULL;
             pages[i].refs = 0;
+            pages[i].writable_mappings = 0;
+            pages[i].executable_mappings = 0;
         }
         return;
     }
@@ -68,6 +77,37 @@ uint16_t phys_get_ref(void *address) {
         if (pages[i].address == address) return pages[i].refs;
     }
     return 0;
+}
+
+int phys_mapping_add(void *address, int writable, int executable) {
+    if (!address || (writable && executable)) return 0;
+    for (int i = 0; i < TEST_PAGE_LIMIT; i++) {
+        test_page_t *page = &pages[i];
+        if (page->address != address || page->refs == 0) continue;
+        if ((writable && page->executable_mappings != 0) ||
+            (executable && page->writable_mappings != 0) ||
+            (writable && page->writable_mappings == UINT16_MAX) ||
+            (executable && page->executable_mappings == UINT16_MAX)) {
+            return 0;
+        }
+        if (writable) page->writable_mappings++;
+        if (executable) page->executable_mappings++;
+        return 1;
+    }
+    return 0;
+}
+
+void phys_mapping_remove(void *address, int writable, int executable) {
+    if (!address || (writable && executable)) return;
+    for (int i = 0; i < TEST_PAGE_LIMIT; i++) {
+        test_page_t *page = &pages[i];
+        if (page->address != address) continue;
+        if (writable && page->writable_mappings != 0)
+            page->writable_mappings--;
+        if (executable && page->executable_mappings != 0)
+            page->executable_mappings--;
+        return;
+    }
 }
 
 static int active_pages(void) {
@@ -123,6 +163,36 @@ int main(void) {
     int baseline_pages = active_pages();
     passed &= check(phys_get_ref(original_page) == 1,
                     "source page starts with one reference");
+
+    uint64_t alias_l0 = mmu_create_user_as();
+    passed &= check(alias_l0 &&
+                    !mmu_map_user_page_prot(alias_l0, va,
+                                            KVA_TO_PA(original_page),
+                                            VM_READ | VM_EXEC, 3) &&
+                    active_pages() == baseline_pages + 1 &&
+                    phys_get_ref(original_page) == 1,
+                    "writable page cannot acquire an executable alias or leak tables");
+    if (alias_l0) mmu_destroy_user_as(alias_l0, 3);
+
+    uint64_t map_root = mmu_create_user_as();
+    uint8_t *map_page = phys_alloc_page();
+    if (!map_root || !map_page) {
+        fprintf(stderr, "FAIL: mapping rollback fixture\n");
+        return 1;
+    }
+    int map_baseline = active_pages();
+    for (int successful_allocations = 0; successful_allocations < 3;
+         successful_allocations++) {
+        fail_after = successful_allocations;
+        int mapped = mmu_map_user_page_prot(
+            map_root, USER_CODE_BASE, KVA_TO_PA(map_page),
+            VM_READ | VM_WRITE, 4);
+        fail_after = -1;
+        passed &= check(!mapped && active_pages() == map_baseline,
+                        "failed user mapping releases partial page tables");
+    }
+    mmu_destroy_user_as(map_root, 4);
+    phys_free_page(map_page);
 
     for (int successful_allocations = 0; successful_allocations < 3;
          successful_allocations++) {
@@ -234,6 +304,16 @@ int main(void) {
                     shared_backing[0] == 0x7C,
                     "shared page writes remain visible without COW fault");
 
+    int pages_before_unmap = active_pages();
+    passed &= check(mmu_unmap_user_page(child_l0, shared_va, 2) &&
+                    leaf_entry(child_l0, shared_va) == NULL &&
+                    phys_get_ref(shared_backing) == 2 &&
+                    (*shared_parent_entry & PTE_VALID) &&
+                    active_pages() == pages_before_unmap - 3,
+                    "unmapping a shared page releases its reference and empty tables");
+    passed &= check(!mmu_unmap_user_page(child_l0, shared_va, 2),
+                    "unmapping an absent page is rejected");
+
     mmu_destroy_user_as(child_l0, 2);
     mmu_destroy_user_as(parent_l0, 1);
     passed &= check(phys_get_ref(shared_backing) == 1,
@@ -241,5 +321,63 @@ int main(void) {
     phys_free_page(shared_backing);
     passed &= check(active_pages() == 0,
                     "shared-page reference teardown releases all pages");
+
+    uint64_t readonly_src = mmu_create_user_as();
+    uint8_t *readonly_page = phys_alloc_page();
+    if (!readonly_src || !readonly_page ||
+        !mmu_map_user_page_prot(readonly_src, USER_CODE_BASE,
+                                KVA_TO_PA(readonly_page), VM_READ, 1)) {
+        fprintf(stderr, "FAIL: read-only clone fixture\n");
+        return 1;
+    }
+    int clone_baseline = active_pages();
+    uint64_t readonly_dst = mmu_create_user_as();
+    if (!readonly_dst) {
+        fprintf(stderr, "FAIL: read-only clone destination\n");
+        return 1;
+    }
+    fail_after = 0;
+    int failed_copy_clone =
+        mmu_clone_user_as(readonly_src, readonly_dst, 2);
+    fail_after = -1;
+    passed &= check(!failed_copy_clone && active_pages() == clone_baseline,
+                    "failed eager clone releases its partial address space");
+
+    readonly_dst = mmu_create_user_as();
+    if (!readonly_dst ||
+        !mmu_clone_user_as(readonly_src, readonly_dst, 2)) {
+        fprintf(stderr, "FAIL: read-only clone\n");
+        return 1;
+    }
+    uint64_t *readonly_entry = leaf_entry(readonly_dst, USER_CODE_BASE);
+    passed &= check(readonly_entry &&
+                    (*readonly_entry & PTE_AP_RDONLY) &&
+                    (*readonly_entry & PTE_UXN),
+                    "eager clone preserves read-only non-executable permissions");
+    mmu_destroy_user_as(readonly_dst, 2);
+    mmu_destroy_user_as(readonly_src, 1);
+    passed &= check(active_pages() == 0,
+                    "eager clone teardown releases every mapping");
+
+    uint16_t allocated_asids[ASID_MAX];
+    int asid_count = 0;
+    while (asid_count < ASID_MAX) {
+        uint16_t asid = mmu_alloc_asid();
+        if (asid == 0) break;
+        allocated_asids[asid_count++] = asid;
+    }
+    passed &= check(asid_count == ASID_MAX && mmu_alloc_asid() == 0,
+                    "ASID allocator rejects exhaustion without reusing live IDs");
+    mmu_release_asid(2);
+    uint16_t reused_asid = mmu_alloc_asid();
+    passed &= check(reused_asid == 2,
+                    "released ASID becomes reusable after invalidation");
+    for (int i = 0; i < asid_count; i++) {
+        if (allocated_asids[i] != 2) mmu_release_asid(allocated_asids[i]);
+    }
+    mmu_release_asid(reused_asid);
+    passed &= check(mmu_alloc_asid() == 1,
+                    "ASID allocator returns to its initial state after release");
+    mmu_release_asid(1);
     return passed ? 0 : 1;
 }

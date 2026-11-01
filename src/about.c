@@ -219,7 +219,7 @@ void about_draw_content(int cx, int cy, int cw, int ch) {
     int logo_cy = cy + 56;
     draw_big_logo(logo_cx, logo_cy, 40);
 
-    fb_draw_string_aa(cx + 116, cy + 36, "BrainixKernel OS", CLR_FG, CLR_BG);
+    fb_draw_string_aa(cx + 116, cy + 36, "BrainixKernel kernel", CLR_FG, CLR_BG);
     fb_draw_string_aa(cx + 116, cy + 60, "Версия " BRAINIX_VERSION, CLR_FG_DIM, CLR_BG);
     fb_draw_string_aa(cx + 116, cy + 80, "ARM64, Brainix v" BRAINIX_VERSION, CLR_FG_DIM, CLR_BG);
 

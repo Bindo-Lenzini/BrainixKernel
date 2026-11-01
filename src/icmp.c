@@ -62,16 +62,13 @@ static int      g_got_reply = 0;
 static uint16_t g_reply_seq = 0;
 
 int icmp_handle_frame(const uint8_t *frame, uint32_t len) {
-    if (len < 14 + 20) return 0;
-    const eth_hdr_t *eth = (const eth_hdr_t *)frame;
-    if (ntohs16(eth->ethertype) != ETH_TYPE_IPV4) return 0;
+    const uint8_t *ip_bytes;
+    uint32_t ip_len;
+    if (!net_ipv4_packet_view(frame, len, &ip_bytes, &ip_len)) return 0;
 
-    const ipv4_hdr_t *ip = (const ipv4_hdr_t *)(frame + 14);
-    if ((ip->ver_ihl >> 4) != 4) return 0;
-
+    const ipv4_hdr_t *ip = (const ipv4_hdr_t *)ip_bytes;
     uint32_t ihl = (ip->ver_ihl & 0x0F) * 4;
-    if (ihl < 20) return 0;
-    if (14 + ihl + 8 > len) return 0;
+    if (ihl < 20 || ihl + sizeof(icmp_hdr_t) > ip_len) return 0;
 
     if (ip->proto != IP_PROTO_ICMP) return 0;
 

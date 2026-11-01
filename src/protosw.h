@@ -39,6 +39,7 @@ struct protosw {
     int     (*pr_listen)(void *ctx, int backlog);
     int     (*pr_send)(void *ctx, const void *data, int len, struct sockaddr *to);
     int     (*pr_recv)(void *ctx, void *buf, int max_len, struct sockaddr *from);
+    int     (*pr_consume)(void *ctx, uint32_t len);
     int     (*pr_close)(void *ctx);
     void    (*pr_input)(void *pkt, int len); 
 };

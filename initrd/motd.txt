@@ -1,3 +1,2 @@
-Welcome to BrainixKernel OS!
-This is your own operating system.
-Version 0.18 — file system arrives.
+BrainixKernel kernel bring-up environment
+Experimental userland for kernel development and testing.

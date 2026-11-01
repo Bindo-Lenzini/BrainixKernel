@@ -67,6 +67,7 @@ void mmu_map_user_page(uint64_t l0_pa, uint64_t va, uint64_t pa,
 // prot: VM_READ | VM_WRITE | VM_EXEC. W^X: EXEC снимает WRITE.
 int mmu_map_user_page_prot(uint64_t l0_pa, uint64_t va, uint64_t pa,
                            uint32_t prot, uint16_t asid);
+int mmu_unmap_user_page(uint64_t l0_pa, uint64_t va, uint16_t asid);
 // Maps a writable page that remains shared and writable across COW fork.
 int mmu_map_user_shared_page(uint64_t l0_pa, uint64_t va, uint64_t pa,
                              uint16_t asid);

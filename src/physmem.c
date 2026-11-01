@@ -21,12 +21,16 @@ static uint64_t g_total_pages = 0;
 
 static uint64_t bitmap[MAX_PAGES / 64];
 static uint16_t g_refcount[MAX_PAGES];
+static uint16_t g_writable_mappings[MAX_PAGES];
+static uint16_t g_executable_mappings[MAX_PAGES];
 
 extern char _end;
 
 static inline void bm_set  (uint64_t i) { bitmap[i / 64] |=  (1ull << (i % 64)); }
 static inline void bm_clear(uint64_t i) { bitmap[i / 64] &= ~(1ull << (i % 64)); }
 static inline int  bm_test (uint64_t i) { return (bitmap[i / 64] >> (i % 64)) & 1; }
+
+static uint64_t page_index_of(uint64_t pa);
 
 static int bank_of(uint64_t pa) {
     for (int i = 0; i < g_num_banks; i++) {
@@ -90,7 +94,11 @@ void physmem_init(void) {
     }
 
     for (uint64_t i = 0; i < MAX_PAGES / 64; i++) bitmap[i] = 0;
-    for (uint64_t i = 0; i < MAX_PAGES; i++) g_refcount[i] = 0;
+    for (uint64_t i = 0; i < MAX_PAGES; i++) {
+        g_refcount[i] = 0;
+        g_writable_mappings[i] = 0;
+        g_executable_mappings[i] = 0;
+    }
 
     // Kernel image занимает PA [base, _end-PA).
     // `_end` — high VA. Convert to PA.
@@ -114,6 +122,8 @@ void *phys_alloc_page(void) {
         bm_set(i);
 
         g_refcount[i] = 1;
+        g_writable_mappings[i] = 0;
+        g_executable_mappings[i] = 0;
         for (int b = 0; b < g_num_banks; b++) {
             if (i < g_banks[b].first_page + g_banks[b].num_pages) {
                 uint64_t off = i - g_banks[b].first_page;
@@ -126,28 +136,31 @@ void *phys_alloc_page(void) {
 }
 
 void *phys_alloc_pages(uint64_t n) {
-    if (n == 0) return 0;
+    if (n == 0 || n > g_total_pages) return 0;
     if (n == 1) return phys_alloc_page();
 
     for (int b = 0; b < g_num_banks; b++) {
         uint64_t first = g_banks[b].first_page;
         uint64_t count = g_banks[b].num_pages;
+        if (n > count) continue;
 
-        uint64_t i = 0;
-        while (i + n <= count) {
-            int ok = 1;
+        uint64_t run = 0;
+        for (uint64_t i = 0; i < count; i++) {
+            if (bm_test(first + i)) {
+                run = 0;
+                continue;
+            }
+            if (++run != n) continue;
+
+            uint64_t start = i + 1 - n;
             for (uint64_t k = 0; k < n; k++) {
-                if (bm_test(first + i + k)) { ok = 0; break; }
+                bm_set(first + start + k);
+                g_refcount[first + start + k] = 1;
+                g_writable_mappings[first + start + k] = 0;
+                g_executable_mappings[first + start + k] = 0;
             }
-            if (ok) {
-                for (uint64_t k = 0; k < n; k++) {
-                    bm_set(first + i + k);
-                    g_refcount[first + i + k] = 1;
-                }
-                uint64_t pa = g_banks[b].base + i * PAGE_SIZE;
-                return PA_TO_KVA(pa);
-            }
-            i++;
+            uint64_t pa = g_banks[b].base + start * PAGE_SIZE;
+            return PA_TO_KVA(pa);
         }
     }
     return 0;
@@ -168,6 +181,7 @@ void phys_free_page(void *kva) {
         g_refcount[idx]--;
         return;
     }
+    if (g_writable_mappings[idx] || g_executable_mappings[idx]) return;
     g_refcount[idx] = 0;
     bm_clear(idx);
 }
@@ -181,6 +195,35 @@ static uint64_t page_index_of(uint64_t pa) {
     if (b < 0) return (uint64_t)-1;
     uint64_t off = (pa - g_banks[b].base) / PAGE_SIZE;
     return g_banks[b].first_page + off;
+}
+
+int phys_mapping_add(void *kva, int writable, int executable) {
+    if (!kva || (writable && executable)) return 0;
+    uint64_t pa = (uint64_t)kva - KERNEL_VA_OFFSET;
+    if (pa & (PAGE_SIZE - 1)) return 0;
+    uint64_t idx = page_index_of(pa);
+    if (idx == (uint64_t)-1 || g_refcount[idx] == 0) return 0;
+    if ((writable && g_executable_mappings[idx] != 0) ||
+        (executable && g_writable_mappings[idx] != 0) ||
+        (writable && g_writable_mappings[idx] == UINT16_MAX) ||
+        (executable && g_executable_mappings[idx] == UINT16_MAX)) {
+        return 0;
+    }
+    if (writable) g_writable_mappings[idx]++;
+    if (executable) g_executable_mappings[idx]++;
+    return 1;
+}
+
+void phys_mapping_remove(void *kva, int writable, int executable) {
+    if (!kva || (writable && executable)) return;
+    uint64_t pa = (uint64_t)kva - KERNEL_VA_OFFSET;
+    if (pa & (PAGE_SIZE - 1)) return;
+    uint64_t idx = page_index_of(pa);
+    if (idx == (uint64_t)-1) return;
+    if (writable && g_writable_mappings[idx] != 0)
+        g_writable_mappings[idx]--;
+    if (executable && g_executable_mappings[idx] != 0)
+        g_executable_mappings[idx]--;
 }
 
 void phys_inc_ref(void *kva) {

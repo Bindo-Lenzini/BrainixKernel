@@ -7,17 +7,31 @@ Apple Silicon and tested in QEMU.
 [![License: GPL-2.0](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](./LICENSE)
 
 > [!WARNING]
-> **BrainixKernel is unfinished experimental software. It is not a production
-> operating system and does not guarantee security, reliability, or data
-> integrity.** Security mechanisms and tests are incomplete. Do not rely on
-> this kernel to protect sensitive data, and do not expose it to untrusted
-> users or networks. Use it for development and experimentation at your own
-> risk.
+> **BrainixKernel is an unfinished experimental kernel. It is not production
+> ready and does not guarantee security, reliability, or data integrity.**
+> Security mechanisms and tests are incomplete. Do not rely on this kernel to
+> protect sensitive data, and do not expose it to untrusted users or networks.
+> Use it for development and experimentation at your own risk.
 
 The project is an ongoing effort to build a small, understandable kernel from
 scratch and explore modern operating-system design. This page describes the
 current state of development; implemented code does not necessarily mean a
 feature is complete or fully validated.
+
+## Project identity
+
+**BrainixKernel is only a kernel.** It is not an operating system or a
+distribution. The repository may contain experimental user-space programs and
+bring-up tools used to develop and test the kernel; these do not make
+BrainixKernel an OS distribution.
+
+**LambdaNexus OS is a separate operating-system distribution based on
+the BrainixKernel kernel.** LambdaNexus-specific desktop, system services,
+applications, and distribution infrastructure belong to that separate
+distribution. Any user-space or UI code currently in this repository is
+experimental bring-up or test material, not the definition of BrainixKernel as
+an OS. Work on the LambdaNexus distribution is outside the current
+kernel-security focus.
 
 ## Contents
 
@@ -64,9 +78,9 @@ compliance, complete functionality, or comprehensive testing.
   page-aligned address; shared writable mappings remain shared across COW `fork`.
 - User tasks default to UID/GID `1000` and empty effective/permitted capability
   masks; forked tasks inherit credentials.
-- Initrd and BKFS file descriptors carry explicit read/write rights derived
-  from `open` and can be further restricted with `fd_restrict`; `dup2` and
-  `fork` preserve the reduced rights.
+- Kernel-backed initrd and BKFS file capabilities carry explicit read/write
+  rights and support `fd_restrict`; ordinary userland `open` currently returns
+  an IPC-backed VFS proxy with independently attenuable read/write rights.
 - A small userland including a shell, basic utilities, network examples, and a
   user-space console-routing service and experimental VFS open broker connected
   to clients over IPC.
@@ -111,18 +125,24 @@ operations are rejected when the corresponding right is absent. Fork and
 Ordinary receive refuses an endpoint-bearing message without consuming it.
 Queued endpoint references are released if their message is discarded with its
 channel.
+`ipc_send_vfs`/`ipc_recv_vfs` provide a distinct transfer type for VFS proxy
+descriptors. The sender selects a subset of read, write, and delegation rights;
+the receiver obtains a proxy fd, not a generic IPC endpoint or kernel-backed
+file descriptor. The VFS broker registers proxy channels, so ordinary IPC
+endpoints cannot be relabeled as file proxies. Queued VFS transfers retain
+their channel reference, reject transfer cycles, and remain isolated from
+generic endpoint/file receive APIs.
 `ipc_map` maps the channel's zero-initialized 4 KiB shared page at a free,
 page-aligned user address. The mapping remains writable and shared after
 `fork`; closing endpoints does not unmap existing mappings.
 
-File descriptors returned by `open` carry `FD_RIGHT_READ` and/or
+Kernel-backed initrd and BKFS descriptors carry `FD_RIGHT_READ` and/or
 `FD_RIGHT_WRITE`, plus `FD_RIGHT_DELEGATE`, constrained by the requested open
-mode and file permissions. `fd_restrict(fd, rights)` can remove rights from an
-initrd or BKFS descriptor, including reducing it to no access; it rejects
-unknown rights, non-file descriptors, and attempts to add authority.
-Duplicating or forking a restricted descriptor preserves its reduced rights.
-`ipc_send_file`/`ipc_recv_file` transfer initrd or BKFS descriptors through IPC
-with a selected subset of the descriptor's rights and the current file offset.
+mode and file permissions. `fd_restrict(fd, rights)` can remove rights from
+these file capabilities, including reducing them to no access; it rejects
+unknown rights and attempts to add authority. `dup2` and `fork` preserve the
+reduced rights. `ipc_send_file`/`ipc_recv_file` transfer these descriptors with
+a selected subset of rights and the current file offset.
 Initrd capabilities remain read-only. BKFS inodes are pinned while referenced
 by an open descriptor or queued IPC capability; `fork` and `dup2` retain their
 own references, and the final close releases them. Deleting a pinned inode or
@@ -130,14 +150,49 @@ formatting BKFS while any inode is pinned returns `EBUSY`, preventing a
 transferred capability from aliasing a reused inode. BKFS reads and writes
 continue to enforce the receiver's current file permissions.
 
-The experimental `vfsd.elf` service accepts ordinary userland `open(path,
-flags)` calls from the shell and its descendants and returns an attenuated file
-descriptor capability over a per-request IPC endpoint. Its kernel-backed
+### Capability invariants and failure behavior
+
+The security review uses these invariants as the baseline for capability
+changes:
+
+- **Authorized creation:** user tasks cannot relabel a generic IPC endpoint as
+  a VFS proxy. The VFS broker can register only its assigned endpoint, and the
+  kernel records the maximum rights for the peer.
+- **Monotonic authority:** restriction, duplication, inheritance, and transfer
+  may preserve or reduce rights, never add rights beyond the source descriptor
+  and registered maximum.
+- **Type isolation:** endpoint, kernel-backed file, and VFS proxy transfers
+  remain distinct; a receive API for one type cannot consume another type.
+- **Lifetime safety:** queued capabilities retain their backing endpoint or
+  inode until consumed or discarded; final close releases the reference.
+- **Fail closed on service loss:** a client endpoint does not imply the
+  service is still alive. After its peer closes, operations fail or report
+  EOF; they must not fall back to a broader kernel-backed open path. There is
+  no general capability-revocation mechanism yet.
+
+Host IPC tests cover registration, attenuation, type isolation, queued
+reference lifetime, and a closed VFS service endpoint. Guest tests cover
+unprivileged registration denial and rights surviving VFS proxy transfer,
+`dup2`, `fork`, and `exec`. These are targeted invariants, not a complete
+capability-system proof.
+
+The experimental `vfsd.elf` service accepts ordinary userland
+`open(path, flags)` calls from the shell and its descendants and returns an
+IPC-backed file descriptor. Userland `read`/`write` calls on that descriptor
+are sent back to the service, which uses a private kernel-backed descriptor
+for the actual I/O. Its kernel-backed
 `open_backend` operation is restricted to the VFS service task and revoked
 when that task successfully executes another image. This exercises user-space
-path brokerage and capability transfer for initrd and BKFS files. Reads,
-writes, directory operations, and BKFS/block-device access still use kernel
-code; the service currently runs with the default unprivileged user credentials.
+path brokerage and request routing for initrd and BKFS files. The filesystem
+and block-device backends remain kernel-backed. VFS proxies support ordinary
+`read`, `write`, `close`, `dup2`, `fork`, and `exec`, but cannot be transferred
+using `ipc_send_file`; that operation is only defined for kernel-backed file
+capabilities. `fd_restrict` can remove proxy read/write rights, and the kernel
+checks those rights on VFS RPC requests, including requests sent directly
+through the IPC API. Duplication, `fork`, and `exec` preserve attenuation.
+Each proxy I/O request carries at most 240 data bytes, so reads and writes may
+complete partially. `vfsd` currently supports up to six simultaneously open
+files. The service runs with the default unprivileged user credentials.
 
 ## UPDATE LOG
 
@@ -164,11 +219,14 @@ code; the service currently runs with the default unprivileged user credentials.
   selected rights and offsets; open descriptors and queued transfers pin inodes,
   so deletion and formatting fail with `EBUSY` until all references are gone.
 - Added an experimental user-space VFS open broker. Ordinary userland `open`
-  sends a path and flags over IPC with a per-request reply endpoint; `vfsd.elf`
-  opens the file using a role-restricted kernel backend and returns an
-  attenuated initrd or BKFS descriptor capability. Guest tests cover both
-  filesystems, permission failures, and backend isolation; reads, writes, and
-  filesystem storage remain kernel-backed.
+  sends a path and flags over IPC with a per-file endpoint; `vfsd.elf` opens
+  files using a role-restricted kernel backend and services userland `read` and
+  `write` requests over that endpoint. Guest tests cover initrd/BKFS I/O,
+  permission failures, and backend isolation; filesystem storage remains
+  kernel-backed.
+- Added kernel-tracked read/write rights to VFS proxy descriptors. Rights can
+  only be attenuated; the kernel validates RPC requests even when sent through
+  the raw IPC API, and `dup2`, `fork`, and `exec` preserve the reduced rights.
 - Shared mappings carry an explicit software PTE bit and stay writable across
   COW fork. Mapping and address-space teardown update physical-page references;
   closing endpoints releases the channel's owner reference without invalidating
@@ -199,6 +257,27 @@ code; the service currently runs with the default unprivileged user credentials.
 - Host regression tests, the kernel build, and the headless QEMU smoke test pass.
 - Broader capability authorization and moving the physical UART driver to
   user-space remain future work.
+
+### 2026-11-01 — syscall, memory, and packet-input hardening
+
+- Made UART reads transactional on copy-out failure and completed `brk` growth
+  rollback and shrink-time unmapping.
+- Tracked writable and executable user mappings per physical page. Conflicting
+  W/X aliases are rejected across address spaces; unmapping, COW transitions,
+  cloning, and teardown update those claims. Failed user mappings roll back
+  intermediate tables, and unmapping prunes empty table pages. The privileged
+  kernel direct map remains writable, while SCTLR.WXN prevents EL1 execution
+  through writable mappings; kernel aliases are not exposed as user mappings.
+- Rejected malformed IPv4 lengths, unsupported fragments, invalid ICMP
+  payload lengths, and invalid TCP header offsets rather than trusting Ethernet
+  padding or clamping packet lengths to received frame size.
+- Added ASID exhaustion/reuse checks, eager-clone failure and permission
+  regressions, and sanitizer-backed malformed packet corpus tests to
+  `make host-test`.
+- Pinned both interactive and headless QEMU configurations to one CPU. The
+  kernel remains single-core: global state and interrupt paths are not
+  synchronized for SMP, and multi-core boot stays disabled pending a complete
+  lock-order design and race validation.
 
 ## Build and run
 
@@ -264,7 +343,7 @@ snapshot; guest disk writes are not persisted to `disk.img`.
 
 | Check | What it covers |
 | --- | --- |
-| `make host-test` | ELF parser cases, BKFS permissions, malformed block-pointer rejection, blank-disk detection and v2 migration, scheduler reaper adoption/fallback and dead-orphan teardown, IPC queue, endpoint delegation/cycle prevention and shared-page lifetime semantics, and COW allocation-failure rollback/shared-mapping behavior |
+| `make host-test` | ELF parser cases, BKFS permissions and malformed block-pointer rejection, scheduler reaper adoption/fallback and dead-orphan teardown, IPC capability/queue behavior, transactional TCP/pipe/UDP receives, bounded physical-page allocation, user mapping W^X alias tracking, COW and eager-clone rollback/permission preservation, ASID exhaustion/reuse, and an ASan/UBSan malformed IPv4/UDP/TCP input corpus |
 | `make smoke` | QEMU boot, console-server startup and shell input/output routed over IPC, kernel self-tests, credentials, BKFS user-file creation, `chmod`/`chown`, execute-bit denial, supplementary-group pointer/range/privilege checks, initrd write denial, invalid open flags, file descriptor rights attenuation across `dup2`/`fork`, read-only initrd capability transfer over IPC, user-pointer handling, pipe and IPC rollback, endpoint creation-policy validation, restricted endpoint operations and delegation, shared-page aliases across `fork`, IPC message exchange, COW isolation, 260 repeated `exec` and fork/wait cycles, and a faulted-child teardown check |
 | GitHub Actions | Host tests, kernel build, and the headless QEMU smoke target |
 
@@ -276,8 +355,24 @@ review.
 
 Security is an active area of development, not a finished property of the
 kernel. Current work includes targeted checks around user pointers, ELF
-permissions, COW cloning, default task credentials, and BKFS read/write
-permissions. Important limitations remain:
+permissions, COW cloning, default task credentials, BKFS read/write permissions,
+and bounded copying of syscall strings and `exec` argument vectors. Malformed,
+unreadable, or unterminated argument vectors are rejected instead of silently
+truncated. TCP receive data is removed from the stream queue only after the
+user-buffer copy succeeds; pipe reads use the same peek/copy/consume ordering.
+UART input is staged until its user-buffer copy succeeds.
+UDP datagrams likewise remain queued until payload and requested source-address
+copies succeed. Contiguous physical-page requests larger than detected RAM are
+rejected before allocator bitmap traversal. `brk` growth rolls back pages if
+allocation or mapping fails, and shrinking releases pages no longer covered by
+the break. Important limitations remain:
+
+The current working threat-model baseline treats user processes and data
+crossing syscall, IPC, filesystem, and network boundaries as untrusted, and
+includes allocation failures in the robustness scope. Physical attacks,
+compromised firmware, hardware side channels, and SMP races are out of scope
+for this baseline; this is a bounded development scope, not a security
+certification.
 
 - BKFS stores UID/GID values up to 65535 and supports up to 8 supplementary
   groups. Directories, `umask`, ACLs, and POSIX errno reporting are not
@@ -293,29 +388,67 @@ permissions. Important limitations remain:
   tasks are reclaimed at a later syscall-triggered scheduling point.
 - ASIDs are recycled after `exec` and wait/reap; more lifecycle and exhaustion
   testing is still needed.
-- Writable aliases and kernel mappings need broader W^X review.
+- Trusted kernel aliases and non-user mapping paths need broader W^X review.
 - Syscall, filesystem, network, and device input paths need more systematic
   negative testing and fuzzing.
 - The kernel is single-core; synchronization for SMP is not implemented.
+- User mappings reject writable/executable aliases across all address spaces.
+  The EL1 direct map remains writable and is protected from EL1 execution by
+  WXN; strict protection against privileged kernel writes through that alias
+  would require a separate mapping policy.
 
 Do not treat passing tests or this feature list as a security guarantee.
+
+### SMP synchronization plan
+
+The kernel remains single-core; the following shared state must be protected
+before enabling secondary CPUs:
+
+- Scheduler/task registry, task state, parent/reaper links, task IDs, and
+  descriptor lifetime.
+- Physical allocator bitmap/refcounts, address-space page tables, COW updates,
+  ASID allocation, and TLB invalidation.
+- IPC channel queues, endpoint references and transfer-cycle checks; pipe
+  buffers and references; socket/TCP connection state and receive queues.
+- BKFS metadata/cache and inode references, block-device state, VirtIO queues,
+  network tables, and UART input state.
+
+Implementation prerequisites:
+
+1. Add per-CPU state plus IRQ-safe spinlocks/atomics with documented memory
+   ordering; keep the scheduler lock out of blocking operations and resource
+   teardown.
+2. Establish and audit a lock-order graph. The initial required nested order
+   is address-space state before physical-page allocator state. IPC, filesystem,
+   and device resources must not be released or called into while holding an
+   unrelated spinlock; detach work under the lock and perform releases after
+   unlocking.
+3. Never hold a spinlock across user-memory copies, allocation, blocking, or
+   device waits. Queue operations that copy to userspace need a reservation or
+   generation token so failure can leave the queued item intact without
+   allowing a second receiver to consume it.
+4. Add lock assertions/race tests for references, queue close-vs-receive,
+   COW-vs-unmap, task reap-vs-wakeup, and interrupt-vs-device completion.
+   Enable SMP only after those tests pass on a multi-core emulator.
 
 ## Roadmap
 
 Near-term development priorities:
 
-1. Add capability-aware service authorization and endpoint policies.
-2. Audit syscall boundaries, authorization checks, and partial-I/O behavior.
-3. Add malformed-input, allocation-failure, and fuzz tests for BKFS, networking,
-   and device interfaces.
-4. Extend memory-protection review to kernel mappings and physical aliases.
-5. Improve CI coverage, then pursue scheduler, synchronization, and userland
-   improvements.
+1. Complete capability authorization across every syscall and kernel resource;
+   current file, endpoint, and VFS-proxy controls are not a complete
+   object-capability system.
+2. Expand malformed-input and failure-injection testing for filesystem and
+   device interfaces; the network parser corpus is bounded regression
+   fuzzing, not exhaustive fuzzing.
+3. Review future VM and kernel mapping APIs against the physical W^X alias
+   tracker and define a policy for privileged writable aliases.
+4. Implement and validate IRQ-safe synchronization before adding SMP support.
 
 Longer-term goals include `mmap`, demand paging, a page cache, SMP support,
 stronger filesystem permissions, and additional kernel-hardening measures.
-BrainixKernel is not currently a drop-in replacement for XNU, Linux, or another
-production operating system.
+BrainixKernel is an experimental kernel, not a production-ready or compatible
+replacement for XNU, Linux, or another production kernel.
 
 ## Project layout
 

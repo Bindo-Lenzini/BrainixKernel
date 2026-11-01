@@ -50,6 +50,8 @@ tcp_conn_t *tcp_get(int idx);
 
 int  tcp_send_syn(tcp_conn_t *c);
 int  tcp_send_data(tcp_conn_t *c, const void *buf, uint32_t len);
+uint32_t tcp_peek_data(tcp_conn_t *c, void *buf, uint32_t max);
+int  tcp_consume_data(tcp_conn_t *c, uint32_t len);
 uint32_t tcp_recv_data(tcp_conn_t *c, void *buf, uint32_t max);
 void tcp_close(tcp_conn_t *c);
 
