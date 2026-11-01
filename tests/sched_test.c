@@ -110,5 +110,35 @@ int main(void) {
                     child.state == TASK_RUNNING,
                     "scheduler switches to a runnable task after orphan teardown");
 
+    uint64_t blocked_frame[0x120 / sizeof(uint64_t)] = {0};
+    blocked_frame[0] = 3;
+    blocked_frame[0x100 / sizeof(uint64_t)] = 0x1004;
+    uint64_t blocked_sp = (uint64_t)blocked_frame;
+    uint64_t next_sp = sched_block_retry(blocked_sp);
+    passed &= check(next_sp != blocked_sp &&
+                    blocked_frame[0x100 / sizeof(uint64_t)] == 0x1000 &&
+                    blocked_frame[0] == 3 &&
+                    child.state == TASK_BLOCKED &&
+                    sched_current() != &child,
+                    "blocking syscall saves a retry frame and switches tasks");
+
+    sched_wake_blocked();
+    passed &= check(child.state == TASK_READY,
+                    "event wake makes blocked syscall task runnable");
+
+    task_t *current = sched_current();
+    for (task_t *task = sched_first(); task; ) {
+        task->state = task == current ? TASK_RUNNING : TASK_BLOCKED;
+        task = task->next;
+        if (task == sched_first()) break;
+    }
+    uint64_t idle_frame[0x120 / sizeof(uint64_t)] = {0};
+    idle_frame[0x100 / sizeof(uint64_t)] = 0x2004;
+    uint64_t idle_sp = (uint64_t)idle_frame;
+    passed &= check(sched_block_retry(idle_sp) == idle_sp &&
+                    idle_frame[0x100 / sizeof(uint64_t)] == 0x2004 &&
+                    current->state == TASK_RUNNING,
+                    "blocking falls back without corrupting frame when no peer is runnable");
+
     return passed ? 0 : 1;
 }

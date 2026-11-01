@@ -56,11 +56,11 @@ compliance, complete functionality, or comprehensive testing.
 - Per-task user address spaces and copy-on-write (`COW`) fork.
 - ELF loading with segment bounds, permission, and entry-point validation.
 - User-memory copy helpers with user-address range and overflow checks.
-- Bounded, nonblocking message channels with paired file-descriptor endpoints;
-  endpoints are inherited on `fork` and messages are copied through validated
-  user-memory helpers. An endpoint can also map its zeroed shared page at a
-  caller-selected page-aligned address; shared writable mappings remain shared
-  across COW `fork`.
+- Bounded message channels with paired file-descriptor endpoints, nonblocking
+  calls, and blocking send/receive variants; endpoints are inherited on `fork`
+  and messages are copied through validated user-memory helpers. An endpoint
+  can also map its zeroed shared page at a caller-selected page-aligned address;
+  shared writable mappings remain shared across COW `fork`.
 - User tasks default to UID/GID `1000` and empty effective/permitted capability
   masks; forked tasks inherit credentials.
 - A small userland including a shell, basic utilities, network examples, and a
@@ -74,10 +74,12 @@ receive buffer remain in the kernel; this is not yet a user-space UART driver.
 ### IPC API
 
 The user runtime exposes `ipc_pair(int fds[2])`, `ipc_send(fd, message, len)`,
-`ipc_recv(fd, message, capacity)`, and `ipc_map(fd, address)`. Each pair creates
+`ipc_recv(fd, message, capacity)`, their blocking variants
+`ipc_send_wait`/`ipc_recv_wait`, and `ipc_map(fd, address)`. Each pair creates
 two bidirectional endpoint descriptors. Message queues hold up to 8 messages
-per receiving endpoint, with a 256-byte maximum per message. Send and receive
-are nonblocking: `IPC_EAGAIN` (`-2`) means the queue is full or empty, receive
+per receiving endpoint, with a 256-byte maximum per message. The regular send
+and receive calls are nonblocking: `IPC_EAGAIN` (`-2`) means the queue is full
+or empty; blocking variants sleep and retry when queue state changes. Receive
 returns `0` for EOF after the peer closes, and invalid arguments return `-1`.
 `ipc_map` maps the channel's zero-initialized 4 KiB shared page at a free,
 page-aligned user address. The mapping remains writable and shared after
@@ -85,7 +87,7 @@ page-aligned user address. The mapping remains writable and shared after
 
 ## UPDATE LOG
 
-### 2026-11-01 — IPC, shared pages, and user-space console routing
+### 2026-11-01 — IPC, shared pages, and user-space console services
 
 - Added paired bidirectional IPC endpoints with bounded FIFO message queues,
   explicit `EAGAIN` when a queue is full or empty, and EOF after peer closure.
@@ -102,17 +104,22 @@ page-aligned user address. The mapping remains writable and shared after
   user copies.
 - COW faults during validated kernel-to-user copies are resolved for the active
   task, allowing IPC receives into forked user buffers.
-- Added a `console.elf` user task with a kernel-created IPC endpoint pair.
-  UART input is forwarded to the shell and shell output is relayed to the UART;
-  the shell continues to use its ordinary stdin/stdout descriptors.
+- Added `console.elf` input/output user tasks with a kernel-created IPC endpoint
+  pair. UART input is forwarded to the shell and shell output is relayed to the
+  UART; the shell continues to use its ordinary stdin/stdout descriptors.
+- Added blocking IPC send/receive calls. Blocked syscalls retry after IPC state
+  changes; queue sends wake receivers, queue consumption wakes senders, and
+  closing endpoints wakes waiters. Terminal reads/writes and the console
+  services use these wakeups instead of polling.
+- Split console input and output into separate user tasks so the input service
+  can wait for UART interrupts while the output service blocks on IPC.
 - Kept UART MMIO, interrupt handling, and receive buffering in the kernel HAL.
   The console service owns routing, but does not directly drive UART hardware.
 - The headless QEMU smoke test now requires the console-server ready marker and
   verifies the shell's test command through the routed input/output path.
 - Host regression tests, the kernel build, and the headless QEMU smoke test pass.
-- IPC receive is still nonblocking, and endpoint transfer between unrelated
-  processes, capability authorization, and moving the physical UART driver to
-  user-space remain future work.
+- Endpoint transfer between unrelated processes, capability authorization,
+  and moving the physical UART driver to user-space remain future work.
 
 ## Build and run
 
@@ -179,7 +186,7 @@ snapshot; guest disk writes are not persisted to `disk.img`.
 | Check | What it covers |
 | --- | --- |
 | `make host-test` | ELF parser cases, BKFS permissions, malformed block-pointer rejection, blank-disk detection and v2 migration, scheduler reaper adoption/fallback and dead-orphan teardown, IPC queue and shared-page lifetime semantics, and COW allocation-failure rollback/shared-mapping behavior |
-| `make smoke` | QEMU boot and console-server startup, kernel self-tests, credentials, BKFS user-file creation, `chmod`/`chown`, execute-bit denial, supplementary-group pointer/range/privilege checks, initrd write denial, invalid open flags, user-pointer handling, pipe and IPC rollback, shared-page aliases across `fork`, forked IPC message exchange, COW isolation, 260 repeated `exec` and fork/wait cycles, and a faulted-child teardown check |
+| `make smoke` | QEMU boot, console-server startup and shell input/output routed over IPC, kernel self-tests, credentials, BKFS user-file creation, `chmod`/`chown`, execute-bit denial, supplementary-group pointer/range/privilege checks, initrd write denial, invalid open flags, user-pointer handling, pipe and IPC rollback, shared-page aliases across `fork`, forked IPC message exchange, COW isolation, 260 repeated `exec` and fork/wait cycles, and a faulted-child teardown check |
 | GitHub Actions | Host tests, kernel build, and the headless QEMU smoke target |
 
 Tests cover selected regression scenarios. They do not prove the absence of
@@ -218,8 +225,7 @@ Do not treat passing tests or this feature list as a security guarantee.
 
 Near-term development priorities:
 
-1. Extend IPC with blocking receive and controlled endpoint transfer between
-   independent processes.
+1. Add controlled endpoint transfer between independent processes.
 2. Audit syscall boundaries, authorization checks, and partial-I/O behavior.
 3. Add malformed-input, allocation-failure, and fuzz tests for BKFS, networking,
    and device interfaces.

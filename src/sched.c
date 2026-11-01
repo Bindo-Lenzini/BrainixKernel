@@ -133,6 +133,21 @@ uint64_t sched_yield_from_frame(uint64_t sp) {
     return next->sp_saved;
 }
 
+uint64_t sched_block_retry(uint64_t sp) {
+    uint64_t *frame = (uint64_t *)sp;
+    task_t *current = g_current;
+    if (!current || !sp) return sp;
+
+    frame[0x100 / 8] -= 4;
+    current->state = TASK_BLOCKED;
+    uint64_t next_sp = sched_yield_from_frame(sp);
+    if (next_sp == sp) {
+        current->state = TASK_RUNNING;
+        frame[0x100 / 8] += 4;
+    }
+    return next_sp;
+}
+
 void sched_wake_blocked(void) {
     if (!g_head) return;
     task_t *p = g_head;

@@ -36,6 +36,8 @@
 #define SYS_CHMOD     29
 #define SYS_CHOWN     30
 #define SYS_IPC_MAP   31
+#define SYS_IPC_SEND_WAIT 32
+#define SYS_IPC_RECV_WAIT 33
 
 void syscall_console_configure(int ipc_idx);
 uint64_t syscall_dispatch(uint64_t sp);

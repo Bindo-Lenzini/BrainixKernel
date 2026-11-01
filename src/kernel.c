@@ -998,18 +998,28 @@ void kernel_main(uint64_t dtb) {
     // User-space shell: sh.elf. Запускаем как U-shell (stdin/stdout через UART).
     const initrd_file_t *elf_file = initrd_find("sh.elf");
     const initrd_file_t *console_file = initrd_find("console.elf");
-    task_t *console_task = 0;
+    task_t *console_input_task = 0;
+    task_t *console_output_task = 0;
     task_t *ue = 0;
     if (console_file && elf_file) {
-        console_task = task_create_from_elf(
-            "console", console_file->data, console_file->size);
-        if (!console_task) panic("failed to create console server");
+        const char *input_args[] = {"console", "input"};
+        const char *output_args[] = {"console", "output"};
+        console_input_task = task_create_from_elf_ex(
+            "console-in", console_file->data, console_file->size,
+            2, input_args);
+        console_output_task = task_create_from_elf_ex(
+            "console-out", console_file->data, console_file->size,
+            2, output_args);
+        if (!console_input_task || !console_output_task)
+            panic("failed to create console service tasks");
 
         int console_ipc = ipc_alloc();
         if (console_ipc < 0) panic("failed to allocate console IPC channel");
-        int server_fd = task_install_ipc_endpoint(console_task, console_ipc, 0);
-        if (server_fd < 0) panic("failed to install console server endpoint");
-        console_task->console_server = 1;
+        if (task_install_ipc_endpoint(console_input_task, console_ipc, 0) < 0 ||
+            task_install_ipc_endpoint(console_output_task, console_ipc, 0) < 0)
+            panic("failed to install console server endpoints");
+        console_input_task->console_server = 1;
+        console_output_task->console_server = 1;
 
         uart_puts("  [elf] sh.elf size=");
         uart_putu(elf_file->size);
@@ -1035,7 +1045,8 @@ void kernel_main(uint64_t dtb) {
     }
 
     sched_add(a);
-    sched_add(console_task);
+    sched_add(console_input_task);
+    sched_add(console_output_task);
     sched_add(ue);
     if (ue && !sched_set_reaper(ue)) panic("failed to register init reaper");
 //     sched_add(uf);

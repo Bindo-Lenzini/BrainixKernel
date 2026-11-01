@@ -11,6 +11,7 @@
 #include "socket.h"
 #include "tcp.h"
 #include "ipc.h"
+#include "sched.h"
 
 #define FRAME_SIZE 0x120
 
@@ -126,7 +127,10 @@ void task_fd_release(task_fd_t *fd) {
     if (fd->src == TFD_PIPE_WRITE) pipe_close_write(fd->pipe_idx);
     if (fd->src == TFD_SOCKET) sock_free(fd->sock_idx);
     if (fd->src == TFD_TCP) tcp_free(fd->tcp_idx);
-    if (fd->src == TFD_IPC) ipc_close(fd->ipc_idx, fd->ipc_endpoint);
+    if (fd->src == TFD_IPC) {
+        ipc_close(fd->ipc_idx, fd->ipc_endpoint);
+        sched_wake_blocked();
+    }
     fd->used       = 0;
     fd->src        = TFD_UNUSED;
     fd->flags      = 0;

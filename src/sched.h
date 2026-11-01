@@ -10,6 +10,7 @@ int sched_set_reaper(task_t *t);
 void sched_reparent_children(uint64_t parent_id);
 void sched_start(void);
 uint64_t sched_yield_from_frame(uint64_t sp);
+uint64_t sched_block_retry(uint64_t sp);
 task_t *sched_current(void);
 task_t *sched_first(void);
 void jump_to_frame(uint64_t sp) __attribute__((noreturn));

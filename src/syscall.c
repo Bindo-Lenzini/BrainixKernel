@@ -113,6 +113,7 @@ static uint64_t sys_write(int fd, const void *user_buf, size_t len) {
                     return result == IPC_EAGAIN
                         ? (uint64_t)(int64_t)IPC_EAGAIN : (uint64_t)-1;
                 }
+                sched_wake_blocked();
                 sent += (size_t)result;
                 if ((uint32_t)result < chunk) break;
             }
@@ -186,6 +187,7 @@ static uint64_t sys_read(int fd, void *user_buf, size_t len) {
                 return (uint64_t)-1;
             if (!ipc_consume(g_console_ipc_idx, CONSOLE_IPC_ENDPOINT))
                 return (uint64_t)-1;
+            sched_wake_blocked();
             return (uint64_t)result;
         }
 
@@ -447,6 +449,7 @@ static uint64_t sys_ipc_send(int fd, const void *user_message, uint64_t len) {
         return (uint64_t)-1;
     int result = ipc_send(descriptor->ipc_idx, descriptor->ipc_endpoint,
                           message, (uint32_t)len);
+    if (result > 0) sched_wake_blocked();
     return result < 0 ? (uint64_t)(int64_t)result : (uint64_t)result;
 }
 
@@ -465,6 +468,7 @@ static uint64_t sys_ipc_recv(int fd, void *user_message, uint64_t capacity) {
         return (uint64_t)-1;
     if (!ipc_consume(descriptor->ipc_idx, descriptor->ipc_endpoint))
         return (uint64_t)-1;
+    sched_wake_blocked();
     return (uint64_t)result;
 }
 
@@ -1162,7 +1166,6 @@ uint64_t syscall_dispatch(uint64_t sp) {
     uint64_t a2  = f[2];
     uint64_t a3  = f[3];
     uint64_t a4  = f[4];
-
     if (nr == SYS_EXIT)    return do_exit(a0, sp);
     if (nr == SYS_YIELD)   return sched_yield_from_frame(sp);
     if (nr == SYS_FORK)    return sys_fork(sp);
@@ -1188,6 +1191,8 @@ uint64_t syscall_dispatch(uint64_t sp) {
     if (nr == SYS_IPC_PAIR) ret = sys_ipc_pair((int *)a0);
     if (nr == SYS_IPC_SEND) ret = sys_ipc_send((int)a0, (const void *)a1, a2);
     if (nr == SYS_IPC_RECV) ret = sys_ipc_recv((int)a0, (void *)a1, a2);
+    if (nr == SYS_IPC_SEND_WAIT) ret = sys_ipc_send((int)a0, (const void *)a1, a2);
+    if (nr == SYS_IPC_RECV_WAIT) ret = sys_ipc_recv((int)a0, (void *)a1, a2);
     if (nr == SYS_DUP2)     ret = sys_dup2((int)a0, (int)a1);
     if (nr == SYS_SOCKET)   ret = sys_socket((int)a0, (int)a1, (int)a2);
     if (nr == SYS_BIND)     ret = sys_bind((int)a0, (uint16_t)a1);
@@ -1209,6 +1214,29 @@ uint64_t syscall_dispatch(uint64_t sp) {
     if (nr == SYS_CHOWN)    ret = sys_chown((const char *)a0, a1, a2);
     if (nr == SYS_IPC_MAP)  ret = sys_ipc_map((int)a0, a1);
 
+    task_t *cur = sched_current();
+    int block_ipc = (nr == SYS_IPC_SEND_WAIT ||
+                     nr == SYS_IPC_RECV_WAIT) &&
+                    (int64_t)ret == IPC_EAGAIN;
+    int block_console_read = nr == SYS_READ && (int)a0 == 0 &&
+                             (int64_t)ret == IPC_EAGAIN &&
+                             g_console_ipc_idx >= 0 && cur &&
+                             !cur->console_server && !cur->to_window;
+    int block_console_write = nr == SYS_WRITE &&
+                              ((int)a0 == 1 || (int)a0 == 2) &&
+                              (int64_t)ret == IPC_EAGAIN &&
+                              g_console_ipc_idx >= 0 && cur &&
+                              !cur->to_window &&
+                              !fd_used((int)a0);
+    int block_console_uart_read = nr == SYS_READ && (int)a0 == 0 &&
+                                  a2 != 0 && ret == 0 && cur &&
+                                  cur->console_server;
+    if (block_ipc || block_console_read || block_console_write ||
+        block_console_uart_read) {
+        uint64_t next_sp = sched_block_retry(sp);
+        if (next_sp == sp) f[0] = ret;
+        return next_sp;
+    }
     f[0] = ret;
     return sp;
 }
