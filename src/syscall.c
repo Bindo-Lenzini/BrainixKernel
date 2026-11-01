@@ -306,6 +306,8 @@ static uint64_t sys_open(const char *user_name, int flags) {
             if (!bkfs_access_allowed(cur, inode, want)) return (uint64_t)-1;
             if (trunc && bkfs_truncate_for(inode, cur->cred) != BKFS_OK)
                 return (uint64_t)-1;
+            if (bkfs_inode_retain(inode) != BKFS_OK)
+                return (uint64_t)-1;
             task_fd_t *f = fd_slot(fd);
             f->used       = 1;
             f->src        = TFD_BKFS;
@@ -603,12 +605,14 @@ static uint64_t sys_ipc_send_file(int fd, const void *user_message,
     if (!descriptor || descriptor->src != TFD_IPC ||
         !(descriptor->ipc_rights & IPC_RIGHT_SEND) ||
         !(descriptor->ipc_rights & IPC_RIGHT_DELEGATE) ||
-        !transfer || transfer->src != TFD_INITRD ||
+        !transfer ||
+        (transfer->src != TFD_INITRD && transfer->src != TFD_BKFS) ||
         !(transfer->file_rights & FD_RIGHT_DELEGATE) || !user_message ||
         transfer_rights == 0 ||
         (transfer_rights & ~IPC_FILE_RIGHT_ALL) != 0 ||
         (transfer_rights & ~transfer->file_rights) != 0 ||
-        (transfer_rights & FD_RIGHT_WRITE) != 0 ||
+        (transfer->src == TFD_INITRD &&
+         (transfer_rights & FD_RIGHT_WRITE) != 0) ||
         len == 0 || len > IPC_MESSAGE_MAX) {
         return (uint64_t)-1;
     }
@@ -616,12 +620,21 @@ static uint64_t sys_ipc_send_file(int fd, const void *user_message,
     uint8_t message[IPC_MESSAGE_MAX];
     if (copy_from_user(message, user_message, len) < 0)
         return (uint64_t)-1;
-    int result = ipc_send_initrd(descriptor->ipc_idx,
+    int result;
+    if (transfer->src == TFD_INITRD) {
+        result = ipc_send_initrd(descriptor->ipc_idx,
                                  descriptor->ipc_endpoint, message,
                                  (uint32_t)len,
                                  (uintptr_t)transfer->file,
                                  transfer->offset,
                                  (uint8_t)transfer_rights);
+    } else {
+        result = ipc_send_bkfs(descriptor->ipc_idx,
+                               descriptor->ipc_endpoint, message,
+                               (uint32_t)len, transfer->bkfs_inode,
+                               transfer->offset,
+                               (uint8_t)transfer_rights);
+    }
     if (result > 0) sched_wake_blocked();
     return result < 0 ? (uint64_t)(int64_t)result : (uint64_t)result;
 }
@@ -640,12 +653,19 @@ static uint64_t sys_ipc_recv_file(int fd, void *user_message,
 
     uint8_t message[IPC_MESSAGE_MAX];
     uintptr_t transfer_file = 0;
+    int transfer_inode = -1;
     uint32_t transfer_offset = 0;
     uint8_t transfer_rights = 0;
     int result = ipc_peek_initrd(descriptor->ipc_idx,
                                  descriptor->ipc_endpoint, message,
                                  (uint32_t)capacity, &transfer_file,
                                  &transfer_offset, &transfer_rights);
+    if (result < 0) {
+        result = ipc_peek_bkfs(descriptor->ipc_idx,
+                               descriptor->ipc_endpoint, message,
+                               (uint32_t)capacity, &transfer_inode,
+                               &transfer_offset, &transfer_rights);
+    }
     if (result <= 0) return (uint64_t)(int64_t)result;
 
     const initrd_file_t *file = (const initrd_file_t *)transfer_file;
@@ -655,9 +675,15 @@ static uint64_t sys_ipc_recv_file(int fd, void *user_message,
                  (transfer_rights & FD_RIGHT_WRITE) != 0)) {
         return (uint64_t)-1;
     }
+    if (transfer_inode >= 0 &&
+        (transfer_rights == 0 ||
+         (transfer_rights & ~IPC_FILE_RIGHT_ALL) != 0 ||
+         bkfs_get_metadata(transfer_inode, 0, 0, 0) != BKFS_OK)) {
+        return (uint64_t)-1;
+    }
 
     int new_fd = -1;
-    if (file) {
+    if (file || transfer_inode >= 0) {
         for (int candidate = FD_BASE; candidate < TASK_MAX_FDS; candidate++) {
             if (!current->fds[candidate].used) {
                 new_fd = candidate;
@@ -675,26 +701,43 @@ static uint64_t sys_ipc_recv_file(int fd, void *user_message,
         return (uint64_t)-1;
     }
 
-    uintptr_t consumed_file = 0;
-    uint32_t consumed_offset = 0;
-    uint8_t consumed_rights = 0;
-    if (!ipc_consume_initrd(descriptor->ipc_idx, descriptor->ipc_endpoint,
-                            &consumed_file, &consumed_offset,
-                            &consumed_rights) ||
-        consumed_file != transfer_file ||
-        consumed_offset != transfer_offset ||
-        consumed_rights != transfer_rights) {
-        return (uint64_t)-1;
+    if (transfer_inode >= 0) {
+        if (bkfs_inode_retain(transfer_inode) != BKFS_OK)
+            return (uint64_t)-1;
+        int consumed_inode = -1;
+        uint32_t consumed_offset = 0;
+        uint8_t consumed_rights = 0;
+        if (!ipc_consume_bkfs(descriptor->ipc_idx,
+                              descriptor->ipc_endpoint, &consumed_inode,
+                              &consumed_offset, &consumed_rights) ||
+            consumed_inode != transfer_inode ||
+            consumed_offset != transfer_offset ||
+            consumed_rights != transfer_rights) {
+            bkfs_inode_release(transfer_inode);
+            return (uint64_t)-1;
+        }
+    } else {
+        uintptr_t consumed_file = 0;
+        uint32_t consumed_offset = 0;
+        uint8_t consumed_rights = 0;
+        if (!ipc_consume_initrd(descriptor->ipc_idx,
+                                descriptor->ipc_endpoint, &consumed_file,
+                                &consumed_offset, &consumed_rights) ||
+            consumed_file != transfer_file ||
+            consumed_offset != transfer_offset ||
+            consumed_rights != transfer_rights) {
+            return (uint64_t)-1;
+        }
     }
 
-    if (file) {
+    if (file || transfer_inode >= 0) {
         task_fd_t *received = &current->fds[new_fd];
         received->used = 1;
-        received->src = TFD_INITRD;
+        received->src = file ? TFD_INITRD : TFD_BKFS;
         received->flags = BKFS_O_RDONLY;
         received->offset = transfer_offset;
         received->file = file;
-        received->bkfs_inode = -1;
+        received->bkfs_inode = transfer_inode;
         received->pipe_idx = -1;
         received->sock_idx = -1;
         received->tcp_idx = -1;
@@ -746,13 +789,11 @@ static uint64_t sys_dup2(int oldfd, int newfd) {
     task_fd_t *fold = fd_used(oldfd);
     if (!fold) return (uint64_t)-1;
 
-    // Закрыть newfd, если использовался.
     task_fd_t *fnew = fd_slot(newfd);
+    task_fd_t copy = *fold;
+    if (!task_fd_retain(&copy)) return (uint64_t)-1;
     task_fd_release(fnew);
-
-    // Копия.
-    *fnew = *fold;
-    task_fd_retain(fnew);
+    *fnew = copy;
 
     return (uint64_t)newfd;
 }

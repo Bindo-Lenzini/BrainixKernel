@@ -360,6 +360,30 @@ int main(int argc, char **argv) {
             }
             close(received_file);
 
+            received_file = -1;
+            received_file_rights = 0;
+            file_received = IPC_EAGAIN;
+            for (int i = 0; i < 10000 && file_received == IPC_EAGAIN; i++) {
+                file_received = ipc_recv_file(
+                    ipc_fds[1], file_message, sizeof(file_message),
+                    &received_file, &received_file_rights);
+                if (file_received == IPC_EAGAIN) yield();
+            }
+            char bkfs_file_data[16];
+            long bkfs_file_read = received_file >= 0
+                ? read(received_file, bkfs_file_data, sizeof(bkfs_file_data))
+                : -1;
+            if (file_received != 5 || memcmp(file_message, "bkfs", 5) != 0 ||
+                received_file < 0 ||
+                received_file_rights != FD_RIGHT_READ ||
+                bkfs_file_read != 5 ||
+                memcmp(bkfs_file_data, "data", 5) != 0 ||
+                write(received_file, "x", 1) != -1) {
+                puts("[ipc child] delegated BKFS capability failed");
+                exit(35);
+            }
+            close(received_file);
+
             char request[IPC_MESSAGE_MAX];
             long received = IPC_EAGAIN;
             for (int i = 0; i < 10000 && received == IPC_EAGAIN; i++) {
@@ -417,6 +441,23 @@ int main(int argc, char **argv) {
             if (file_fd >= 0) close(file_fd);
             ipc_ok = ipc_ok && file_escalation == -1 && file_sent == 5;
             if (!ipc_ok) puts("[ipc] delegated read-only file send failed");
+
+            int bkfs_fd = open("ipc-capability-test",
+                               O_CREAT | O_RDWR | O_TRUNC);
+            long bkfs_file_write = bkfs_fd >= 0
+                ? write(bkfs_fd, "data", 5)
+                : -1;
+            if (bkfs_fd >= 0) close(bkfs_fd);
+            int bkfs_read_fd = bkfs_file_write == 5
+                ? open("ipc-capability-test", O_RDONLY)
+                : -1;
+            long bkfs_file_sent = bkfs_read_fd >= 0
+                ? ipc_send_file(ipc_fds[0], "bkfs", 5, bkfs_read_fd,
+                                FD_RIGHT_READ)
+                : -1;
+            if (bkfs_read_fd >= 0) close(bkfs_read_fd);
+            ipc_ok = ipc_ok && bkfs_file_write == 5 && bkfs_file_sent == 5;
+            if (!ipc_ok) puts("[ipc] delegated BKFS file send failed");
 
             long sent = ipc_send(ipc_fds[0], "hello", 6);
             ipc_ok = ipc_ok && sent == 6;

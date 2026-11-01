@@ -13,6 +13,7 @@
 #define BKFS_EEXIST  -3
 #define BKFS_EIO     -4
 #define BKFS_EINVAL  -5
+#define BKFS_EBUSY   -6
 
 #define BKFS_MAX_ID  CRED_MAX_ID
 #define BKFS_DEFAULT_MODE 0644u
@@ -57,6 +58,8 @@ int  bkfs_open(const char *name);
 int  bkfs_get_metadata(int inode, uint32_t *uid, uint32_t *gid,
                        uint32_t *mode);
 int  bkfs_size(int inode);
+int  bkfs_inode_retain(int inode);
+void bkfs_inode_release(int inode);
 int  bkfs_truncate(int inode);
 int  bkfs_truncate_for(int inode, const struct cred *cred);
 int  bkfs_read_at(int inode, uint32_t offset, void *buf, uint32_t len);

@@ -72,6 +72,7 @@ static uint32_t g_inode_cache_sector = 0xFFFFFFFFu;
 // Bitmap свободных/занятых блоков (1 = занят).
 static uint8_t  g_block_bitmap[MAX_DISK_SECTORS / 8];
 static uint32_t g_total_blocks = 0;
+static uint32_t g_inode_refs[BKFS_INODE_COUNT];
 
 _Static_assert(sizeof(bkfs_inode_t) == 128, "BKFS v3 inode size");
 _Static_assert(sizeof(bkfs_inode_v2_t) == 128, "BKFS v2 inode size");
@@ -374,11 +375,19 @@ static int metadata_validate(void) {
     return 1;
 }
 
+static int inode_refs_active(void) {
+    for (uint32_t i = 0; i < BKFS_INODE_COUNT; i++) {
+        if (g_inode_refs[i] != 0) return 1;
+    }
+    return 0;
+}
+
 // ============================================================
 // Public API
 // ============================================================
 
 int bkfs_init(void) {
+    if (inode_refs_active()) return -1;
     g_ready = 0;
     g_inode_cache_sector = 0xFFFFFFFFu;
 
@@ -432,6 +441,7 @@ int bkfs_init(void) {
 int bkfs_is_ready(void) { return g_ready; }
 
 int bkfs_format(void) {
+    if (inode_refs_active()) return BKFS_EBUSY;
     uint64_t total = blk_capacity();
     if (total < BKFS_DATA_START) return BKFS_EIO;
     if (total > MAX_DISK_SECTORS) total = MAX_DISK_SECTORS;
@@ -608,6 +618,24 @@ int bkfs_size(int inode) {
     return (int)in.size;
 }
 
+int bkfs_inode_retain(int inode) {
+    if (!g_ready) return BKFS_EIO;
+    if (inode < 0 || inode >= (int)BKFS_INODE_COUNT) return BKFS_ENOENT;
+
+    bkfs_inode_t in;
+    if (!inode_load((uint32_t)inode, &in)) return BKFS_EIO;
+    if (in.type == 0) return BKFS_ENOENT;
+    if (g_inode_refs[inode] == UINT32_MAX) return BKFS_EBUSY;
+    g_inode_refs[inode]++;
+    return BKFS_OK;
+}
+
+void bkfs_inode_release(int inode) {
+    if (inode < 0 || inode >= (int)BKFS_INODE_COUNT ||
+        g_inode_refs[inode] == 0) return;
+    g_inode_refs[inode]--;
+}
+
 int bkfs_truncate(int inode) {
     if (!g_ready) return BKFS_EIO;
     if (inode < 0 || inode >= (int)BKFS_INODE_COUNT) return BKFS_ENOENT;
@@ -750,6 +778,7 @@ static int inode_delete(const char *name) {
 
     uint32_t idx;
     if (!inode_find(name, &idx)) return BKFS_ENOENT;
+    if (g_inode_refs[idx] != 0) return BKFS_EBUSY;
 
     bkfs_inode_t in;
     if (!inode_load(idx, &in)) return BKFS_EIO;

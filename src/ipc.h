@@ -20,6 +20,7 @@
 #define IPC_TRANSFER_NONE     0
 #define IPC_TRANSFER_ENDPOINT 1
 #define IPC_TRANSFER_INITRD   2
+#define IPC_TRANSFER_BKFS     3
 
 #define IPC_FILE_RIGHT_READ     0x01
 #define IPC_FILE_RIGHT_WRITE    0x02
@@ -37,6 +38,9 @@ int ipc_send_endpoint(int idx, uint8_t endpoint, const void *message,
 int ipc_send_initrd(int idx, uint8_t endpoint, const void *message,
                     uint32_t len, uintptr_t file, uint32_t offset,
                     uint8_t transfer_rights);
+int ipc_send_bkfs(int idx, uint8_t endpoint, const void *message,
+                  uint32_t len, int inode, uint32_t offset,
+                  uint8_t transfer_rights);
 int ipc_peek(int idx, uint8_t endpoint, void *message, uint32_t capacity);
 int ipc_peek_endpoint(int idx, uint8_t endpoint, void *message,
                       uint32_t capacity, int *transfer_idx,
@@ -44,12 +48,17 @@ int ipc_peek_endpoint(int idx, uint8_t endpoint, void *message,
 int ipc_peek_initrd(int idx, uint8_t endpoint, void *message,
                     uint32_t capacity, uintptr_t *file, uint32_t *offset,
                     uint8_t *transfer_rights);
+int ipc_peek_bkfs(int idx, uint8_t endpoint, void *message,
+                  uint32_t capacity, int *inode, uint32_t *offset,
+                  uint8_t *transfer_rights);
 int ipc_consume(int idx, uint8_t endpoint);
 int ipc_consume_endpoint(int idx, uint8_t endpoint, int *transfer_idx,
                          uint8_t *transfer_endpoint,
                          uint8_t *transfer_rights);
 int ipc_consume_initrd(int idx, uint8_t endpoint, uintptr_t *file,
                        uint32_t *offset, uint8_t *transfer_rights);
+int ipc_consume_bkfs(int idx, uint8_t endpoint, int *inode,
+                     uint32_t *offset, uint8_t *transfer_rights);
 void *ipc_shared_page(int idx);
 
 #endif

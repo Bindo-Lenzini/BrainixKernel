@@ -120,12 +120,14 @@ mode and file permissions. `fd_restrict(fd, rights)` can remove rights from an
 initrd or BKFS descriptor, including reducing it to no access; it rejects
 unknown rights, non-file descriptors, and attempts to add authority.
 Duplicating or forking a restricted descriptor preserves its reduced rights.
-`ipc_send_file`/`ipc_recv_file` transfer read-only initrd descriptors through
-IPC with a selected subset of `READ`/`DELEGATE` rights and the current file
-offset. The sender retains its descriptor. An initrd file remains valid after
-the sender closes it because initrd contents are immutable and kernel-resident.
-BKFS descriptor transfer is not supported yet; it needs stable inode lifetime
-management so queued capabilities cannot outlive or alias a deleted inode.
+`ipc_send_file`/`ipc_recv_file` transfer initrd or BKFS descriptors through IPC
+with a selected subset of the descriptor's rights and the current file offset.
+Initrd capabilities remain read-only. BKFS inodes are pinned while referenced
+by an open descriptor or queued IPC capability; `fork` and `dup2` retain their
+own references, and the final close releases them. Deleting a pinned inode or
+formatting BKFS while any inode is pinned returns `EBUSY`, preventing a
+transferred capability from aliasing a reused inode. BKFS reads and writes
+continue to enforce the receiver's current file permissions.
 
 ## UPDATE LOG
 
@@ -148,7 +150,9 @@ management so queued capabilities cannot outlive or alias a deleted inode.
 - Added IPC transfer for read-only initrd file capabilities. Delegation carries
   the file offset and a non-escalating rights subset; ordinary and endpoint
   receive APIs cannot consume file-bearing messages, and invalid output pointers
-  leave the queued capability intact. BKFS transfer awaits stable inode pins.
+  leave the queued capability intact. BKFS descriptors now transfer with
+  selected rights and offsets; open descriptors and queued transfers pin inodes,
+  so deletion and formatting fail with `EBUSY` until all references are gone.
 - Shared mappings carry an explicit software PTE bit and stay writable across
   COW fork. Mapping and address-space teardown update physical-page references;
   closing endpoints releases the channel's owner reference without invalidating

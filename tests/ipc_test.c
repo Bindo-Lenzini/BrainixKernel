@@ -13,6 +13,19 @@ typedef struct {
 } test_page_t;
 
 static test_page_t pages[TEST_PAGE_LIMIT];
+static uint32_t bkfs_refs[256];
+
+int bkfs_inode_retain(int inode) {
+    if (inode < 0 || inode >= 256 || bkfs_refs[inode] == UINT32_MAX)
+        return -1;
+    bkfs_refs[inode]++;
+    return 0;
+}
+
+void bkfs_inode_release(int inode) {
+    if (inode >= 0 && inode < 256 && bkfs_refs[inode] > 0)
+        bkfs_refs[inode]--;
+}
 
 void *phys_alloc_page(void) {
     for (int i = 0; i < TEST_PAGE_LIMIT; i++) {
@@ -314,9 +327,65 @@ int main(void) {
                     received_offset == file_offset &&
                     received_file_rights == IPC_FILE_RIGHT_READ,
                     "file capability metadata survives peek and ownership transfer");
+    int inode_token = 9;
+    int received_inode = -1;
+    uint32_t received_inode_offset = 0;
+    uint8_t received_inode_rights = 0;
+    passed &= check(ipc_send_bkfs(file_carrier, 0, transfer_payload,
+                                  sizeof(transfer_payload), inode_token, 11,
+                                  IPC_FILE_RIGHT_READ | IPC_FILE_RIGHT_WRITE) ==
+                        (int)sizeof(transfer_payload) &&
+                    bkfs_refs[inode_token] == 1,
+                    "queued BKFS capability pins its inode");
+    passed &= check(ipc_peek_initrd(file_carrier, 1, received,
+                                    sizeof(received), &received_file,
+                                    &received_offset,
+                                    &received_file_rights) == -1 &&
+                    ipc_peek(file_carrier, 1, received, sizeof(received)) ==
+                        -1 &&
+                    ipc_peek_endpoint(file_carrier, 1, received,
+                                      sizeof(received), &transferred_idx,
+                                      &transferred_endpoint,
+                                      &transferred_rights) == -1 &&
+                    ipc_consume_endpoint(file_carrier, 1, &transferred_idx,
+                                         &transferred_endpoint,
+                                         &transferred_rights) == 0 &&
+                    ipc_peek_bkfs(file_carrier, 1, received,
+                                  sizeof(received), &received_inode,
+                                  &received_inode_offset,
+                                  &received_inode_rights) ==
+                        (int)sizeof(transfer_payload) &&
+                    received_inode == inode_token &&
+                    received_inode_offset == 11 &&
+                    received_inode_rights ==
+                        (IPC_FILE_RIGHT_READ | IPC_FILE_RIGHT_WRITE),
+                    "BKFS capability is type-isolated and preserves metadata");
+    passed &= check(ipc_consume_bkfs(file_carrier, 1, &received_inode,
+                                     &received_inode_offset,
+                                     &received_inode_rights) &&
+                    received_inode == inode_token &&
+                    bkfs_refs[inode_token] == 0,
+                    "consuming BKFS capability releases its queue pin");
     ipc_close(file_carrier, 0);
     ipc_close(file_carrier, 1);
     passed &= check(active_pages() == 0,
                     "file-capability channel teardown releases backing page");
+    int bkfs_cleanup_carrier = ipc_alloc();
+    if (bkfs_cleanup_carrier < 0) {
+        fprintf(stderr, "FAIL: BKFS cleanup fixture allocation\n");
+        return 1;
+    }
+    ipc_ref(bkfs_cleanup_carrier, 0);
+    ipc_ref(bkfs_cleanup_carrier, 1);
+    passed &= check(ipc_send_bkfs(bkfs_cleanup_carrier, 0, transfer_payload,
+                                  sizeof(transfer_payload), inode_token, 0,
+                                  IPC_FILE_RIGHT_READ) ==
+                        (int)sizeof(transfer_payload) &&
+                    bkfs_refs[inode_token] == 1,
+                    "queued BKFS capability holds a pin until channel cleanup");
+    ipc_close(bkfs_cleanup_carrier, 0);
+    ipc_close(bkfs_cleanup_carrier, 1);
+    passed &= check(bkfs_refs[inode_token] == 0 && active_pages() == 0,
+                    "discarding BKFS message releases inode and channel references");
     return passed ? 0 : 1;
 }

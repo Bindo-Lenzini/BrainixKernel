@@ -101,7 +101,7 @@ int task_setup_user_stack(uint64_t l0_pa, uint16_t asid,
 
 task_t *task_fork_clone(task_t *parent, uint64_t new_l0, uint16_t new_asid,
                        uint64_t parent_frame_sp);
-void task_fd_retain(task_fd_t *fd);
+int task_fd_retain(task_fd_t *fd);
 void task_fd_release(task_fd_t *fd);
 int task_install_ipc_endpoint(task_t *task, int ipc_idx, uint8_t endpoint,
                               uint8_t rights);

@@ -11,6 +11,7 @@
 #include "socket.h"
 #include "tcp.h"
 #include "ipc.h"
+#include "bkfs.h"
 #include "sched.h"
 
 #define FRAME_SIZE 0x120
@@ -86,13 +87,16 @@ static task_t *alloc_task(const char *name,
     return t;
 }
 
-void task_fd_retain(task_fd_t *fd) {
-    if (!fd || !fd->used) return;
+int task_fd_retain(task_fd_t *fd) {
+    if (!fd || !fd->used) return 1;
+    if (fd->src == TFD_BKFS &&
+        bkfs_inode_retain(fd->bkfs_inode) != BKFS_OK) return 0;
     if (fd->src == TFD_PIPE_READ) pipe_ref_read(fd->pipe_idx);
     if (fd->src == TFD_PIPE_WRITE) pipe_ref_write(fd->pipe_idx);
     if (fd->src == TFD_SOCKET) sock_ref(fd->sock_idx);
     if (fd->src == TFD_TCP) tcp_ref(fd->tcp_idx);
     if (fd->src == TFD_IPC) ipc_ref(fd->ipc_idx, fd->ipc_endpoint);
+    return 1;
 }
 
 static void task_set_ipc_descriptor(task_fd_t *descriptor, int ipc_idx,
@@ -138,6 +142,7 @@ int task_adopt_ipc_endpoint_at(task_t *task, int fd, int ipc_idx,
 
 void task_fd_release(task_fd_t *fd) {
     if (!fd || !fd->used) return;
+    if (fd->src == TFD_BKFS) bkfs_inode_release(fd->bkfs_inode);
     if (fd->src == TFD_PIPE_READ) pipe_close_read(fd->pipe_idx);
     if (fd->src == TFD_PIPE_WRITE) pipe_close_write(fd->pipe_idx);
     if (fd->src == TFD_SOCKET) sock_free(fd->sock_idx);
@@ -457,7 +462,7 @@ task_t *task_fork_clone(task_t *parent, uint64_t new_l0, uint16_t new_asid,
     if (!kstack) { kfree(child); return 0; }
     child->kstack_base = (uint64_t)kstack;
 
-    // Копируем всё, включая fds.
+    // Copy task state before rebuilding the child's owned descriptor references.
     // (struct task_t имеет тривиальные поля, memcpy корректен.)
     {
         const uint8_t *s = (const uint8_t *)parent;
@@ -491,9 +496,18 @@ task_t *task_fork_clone(task_t *parent, uint64_t new_l0, uint16_t new_asid,
     child->name[nl++] = 'c';
     child->name[nl]   = 0;
 
-    // The child owns one reference to each inherited descriptor resource.
+    fds_init(child->fds);
     for (int i = 0; i < TASK_MAX_FDS; i++) {
-        task_fd_retain(&child->fds[i]);
+        child->fds[i] = parent->fds[i];
+        if (!task_fd_retain(&child->fds[i])) {
+            child->fds[i].used = 0;
+            for (int j = 0; j < i; j++) task_fd_release(&child->fds[j]);
+            cred_free(child->cred);
+            for (uint64_t j = 0; j < kpages; j++)
+                phys_free_page(kstack + j * PAGE_SIZE);
+            kfree(child);
+            return 0;
+        }
     }
 
     // Kernel-стек: копия frame'а.

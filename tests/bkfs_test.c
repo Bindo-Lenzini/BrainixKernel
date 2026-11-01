@@ -262,9 +262,20 @@ int main(void) {
           bkfs_get_metadata(inode, 0, 0, &mode) == BKFS_OK &&
           (mode & 06000u) == 0,
           "unprivileged writes and truncation clear set-ID mode bits");
+    int held_inode = -1;
     check(bkfs_create_for("delete-me", &owner, 0600) == BKFS_OK &&
+          (held_inode = bkfs_open("delete-me")) >= 0 &&
+          bkfs_inode_retain(held_inode) == BKFS_OK &&
+          bkfs_inode_retain(held_inode) == BKFS_OK &&
           bkfs_delete_for("delete-me", &other) == BKFS_EINVAL &&
-          bkfs_delete_for("delete-me", &owner) == BKFS_OK,
+          bkfs_delete_for("delete-me", &owner) == BKFS_EBUSY &&
+          bkfs_format() == BKFS_EBUSY,
+          "pinned inode cannot be deleted or invalidated by formatting");
+    bkfs_inode_release(held_inode);
+    check(bkfs_delete_for("delete-me", &owner) == BKFS_EBUSY,
+          "inode remains pinned until every reference is released");
+    bkfs_inode_release(held_inode);
+    check(bkfs_delete_for("delete-me", &owner) == BKFS_OK,
           "delete helper enforces owner policy");
     check(bkfs_create_for("group-file", &root, 0640) == BKFS_OK &&
           bkfs_write_for("group-file", "g", 1, &root) == 1 &&
