@@ -10,6 +10,7 @@
 #include "pipe.h"
 #include "socket.h"
 #include "tcp.h"
+#include "ipc.h"
 
 #define FRAME_SIZE 0x120
 
@@ -39,6 +40,8 @@ static void fds_init(task_fd_t *fds) {
         fds[i].pipe_idx   = -1;
         fds[i].sock_idx   = -1;
         fds[i].tcp_idx    = -1;
+        fds[i].ipc_idx    = -1;
+        fds[i].ipc_endpoint = 0;
     }
 }
 
@@ -85,6 +88,7 @@ void task_fd_retain(task_fd_t *fd) {
     if (fd->src == TFD_PIPE_WRITE) pipe_ref_write(fd->pipe_idx);
     if (fd->src == TFD_SOCKET) sock_ref(fd->sock_idx);
     if (fd->src == TFD_TCP) tcp_ref(fd->tcp_idx);
+    if (fd->src == TFD_IPC) ipc_ref(fd->ipc_idx, fd->ipc_endpoint);
 }
 
 void task_fd_release(task_fd_t *fd) {
@@ -93,6 +97,7 @@ void task_fd_release(task_fd_t *fd) {
     if (fd->src == TFD_PIPE_WRITE) pipe_close_write(fd->pipe_idx);
     if (fd->src == TFD_SOCKET) sock_free(fd->sock_idx);
     if (fd->src == TFD_TCP) tcp_free(fd->tcp_idx);
+    if (fd->src == TFD_IPC) ipc_close(fd->ipc_idx, fd->ipc_endpoint);
     fd->used       = 0;
     fd->src        = TFD_UNUSED;
     fd->flags      = 0;
@@ -102,6 +107,8 @@ void task_fd_release(task_fd_t *fd) {
     fd->pipe_idx   = -1;
     fd->sock_idx   = -1;
     fd->tcp_idx    = -1;
+    fd->ipc_idx   = -1;
+    fd->ipc_endpoint = 0;
 }
 
 void task_destroy(task_t *t) {

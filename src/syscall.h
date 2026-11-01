@@ -24,6 +24,9 @@
 #define SYS_CONNECT  17
 #define SYS_SEND     18
 #define SYS_RECV     19
+#define SYS_IPC_PAIR 20
+#define SYS_IPC_SEND 21
+#define SYS_IPC_RECV 22
 #define SYS_GETUID   23
 #define SYS_GETEUID  24
 #define SYS_GETGID   25
@@ -32,6 +35,7 @@
 #define SYS_SETGROUPS 28
 #define SYS_CHMOD     29
 #define SYS_CHOWN     30
+#define SYS_IPC_MAP   31
 
 uint64_t syscall_dispatch(uint64_t sp);
 

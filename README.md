@@ -56,6 +56,11 @@ compliance, complete functionality, or comprehensive testing.
 - Per-task user address spaces and copy-on-write (`COW`) fork.
 - ELF loading with segment bounds, permission, and entry-point validation.
 - User-memory copy helpers with user-address range and overflow checks.
+- Bounded, nonblocking message channels with paired file-descriptor endpoints;
+  endpoints are inherited on `fork` and messages are copied through validated
+  user-memory helpers. An endpoint can also map its zeroed shared page at a
+  caller-selected page-aligned address; shared writable mappings remain shared
+  across COW `fork`.
 - User tasks default to UID/GID `1000` and empty effective/permitted capability
   masks; forked tasks inherit credentials.
 - A small userland including a shell, basic utilities, and network examples.
@@ -109,6 +114,25 @@ compliance, complete functionality, or comprehensive testing.
 The [latest CI run](https://github.com/Bindo-Lenzini/BrainixKernel/actions)
 passed these configured checks. Passing them only confirms the tested
 scenarios; it is not a complete security audit.
+
+### 2026-11-01 — IPC messages and shared pages
+
+- Added paired bidirectional IPC endpoints with bounded FIFO message queues,
+  explicit `EAGAIN` when a queue is full or empty, and EOF after peer closure.
+- Added register-ABI system calls for creating endpoint pairs, sending messages,
+  receiving messages, and mapping an endpoint's zeroed 4 KiB shared page.
+  Endpoint descriptors retain/release channel references across `fork`,
+  `dup2`, `close`, and task teardown.
+- Shared mappings carry an explicit software PTE bit and stay writable across
+  COW fork. Mapping and address-space teardown update physical-page references;
+  closing endpoints releases the channel's owner reference without invalidating
+  existing mappings.
+- User-memory faults do not consume queued messages; host and guest tests cover
+  queue bounds, FIFO order, forked endpoint exchange, shared aliases, and failed
+  user copies.
+- Receive is still nonblocking, and endpoint transfer between unrelated
+  processes, capability authorization, and moving the console driver to
+  user-space are not implemented yet.
 
 ## Build and run
 
@@ -174,8 +198,8 @@ snapshot; guest disk writes are not persisted to `disk.img`.
 
 | Check | What it covers |
 | --- | --- |
-| `make host-test` | ELF parser cases, BKFS permissions, malformed block-pointer rejection, blank-disk detection and v2 migration, scheduler reaper adoption/fallback, and COW allocation-failure rollback |
-| `make smoke` | QEMU boot, kernel self-tests, credentials, BKFS user-file creation, `chmod`/`chown`, execute-bit denial, supplementary-group pointer/range/privilege checks, initrd write denial, invalid open flags, user-pointer handling, pipe rollback, COW isolation, 260 repeated `exec` and fork/wait cycles, and a faulted-child teardown check |
+| `make host-test` | ELF parser cases, BKFS permissions, malformed block-pointer rejection, blank-disk detection and v2 migration, scheduler reaper adoption/fallback and dead-orphan teardown, IPC queue semantics, and COW allocation-failure rollback |
+| `make smoke` | QEMU boot, kernel self-tests, credentials, BKFS user-file creation, `chmod`/`chown`, execute-bit denial, supplementary-group pointer/range/privilege checks, initrd write denial, invalid open flags, user-pointer handling, pipe and IPC rollback, forked IPC exchange, COW isolation, 260 repeated `exec` and fork/wait cycles, and a faulted-child teardown check |
 | GitHub Actions | Host tests, kernel build, and the headless QEMU smoke target |
 
 Tests cover selected regression scenarios. They do not prove the absence of
@@ -214,9 +238,11 @@ Do not treat passing tests or this feature list as a security guarantee.
 
 Near-term development priorities:
 
-1. Expand teardown and COW allocation-failure tests.
-2. Audit syscall boundaries, authorization checks, and partial-I/O behavior.
-3. Add malformed-input, allocation-failure, and fuzz tests for BKFS, networking,
+1. Move the console driver behind a user-space server and IPC endpoint.
+2. Extend IPC with blocking receive and controlled endpoint transfer between
+   independent processes.
+3. Audit syscall boundaries, authorization checks, and partial-I/O behavior.
+4. Add malformed-input, allocation-failure, and fuzz tests for BKFS, networking,
    and device interfaces.
 4. Extend memory-protection review to kernel mappings and physical aliases.
 5. Improve CI coverage, then pursue scheduler, synchronization, and userland

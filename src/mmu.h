@@ -67,6 +67,9 @@ void mmu_map_user_page(uint64_t l0_pa, uint64_t va, uint64_t pa,
 // prot: VM_READ | VM_WRITE | VM_EXEC. W^X: EXEC снимает WRITE.
 int mmu_map_user_page_prot(uint64_t l0_pa, uint64_t va, uint64_t pa,
                            uint32_t prot, uint16_t asid);
+// Maps a writable page that remains shared and writable across COW fork.
+int mmu_map_user_shared_page(uint64_t l0_pa, uint64_t va, uint64_t pa,
+                             uint16_t asid);
 
 int  mmu_pan_supported(void);
 void mmu_pan_enable(void);
@@ -79,10 +82,11 @@ void mmu_pan_on(void);
 int mmu_clone_user_as(uint64_t src_l0_pa, uint64_t dst_l0_pa, uint16_t dst_asid);
 
 // COW-клон: листовые страницы шарим (refcount++), промежуточные
-// таблицы копируем. Всё шаримое помечается read-only.
+// таблицы копируем. Обычные writable страницы становятся read-only; shared
+// mappings остаются writable в обоих адресных пространствах.
 //
 // src_asid и dst_asid нужны, чтобы инвалидировать TLB **обоих**
-// процессов: после клона PTE родителя тоже стали RO, но его TLB
+// процессов: после клона COW PTE родителя стали RO, но его TLB
 // ещё помнит RW — без flush родитель писал бы в общую страницу
 // без fault'а.
 int mmu_clone_user_as_cow(uint64_t src_l0_pa, uint16_t src_asid,

@@ -54,16 +54,16 @@ static inline void isb(void)    { __asm__ volatile("isb"    ::: "memory"); }
 #define PTE_PXN         (1ull << 53)
 #define PTE_UXN         (1ull << 54)
 #define PTE_SW_COW      (1ull << 55)   /* was writable; RO only because of CoW */
+#define PTE_SW_SHARED   (1ull << 56)
 
 #define PTE_AP_KERNEL_RW   (0ull << 6)
 #define PTE_AP_USER_RW     (1ull << 6)
 #define PTE_AP_KERNEL_RO   (2ull << 6)
 #define PTE_AP_USER_RO     (3ull << 6)
 
-// Маска «полезных» флагов листа: биты 0..11 (valid..nG) + 52..54
-// (Contiguous, PXN, UXN). Используется при COW, чтобы не терять
-// W^X-биты. PA сюда не входит — её берём отдельной маской.
-#define PTE_LEAF_FLAGS_MASK  (0xFFFull | (15ull << 52))
+// Leaf flags include descriptor attributes and software COW/shared markers;
+// physical address bits are masked separately.
+#define PTE_LEAF_FLAGS_MASK  (0xFFFull | (31ull << 52))
 #define PTE_LEAF_PA_MASK     0x0000FFFFFFFFF000ULL
 
 #define DESC_TABLE       (PTE_VALID | PTE_BIT1)
@@ -397,8 +397,8 @@ void mmu_map_user_page(uint64_t l0_pa, uint64_t va, uint64_t pa,
     (void)mmu_map_user_page_prot(l0_pa, va, pa, prot, asid);
 }
 
-int mmu_map_user_page_prot(uint64_t l0_pa, uint64_t va, uint64_t pa,
-                           uint32_t prot, uint16_t asid) {
+static int map_user_page(uint64_t l0_pa, uint64_t va, uint64_t pa,
+                         uint32_t prot, uint16_t asid, int shared) {
     if (!l0_pa || va < USER_CODE_BASE || va >= USER_VA_LIMIT ||
         (va & 0xFFF) || (pa & 0xFFF) ||
         (prot & ~(VM_READ | VM_WRITE | VM_EXEC)) ||
@@ -427,7 +427,7 @@ int mmu_map_user_page_prot(uint64_t l0_pa, uint64_t va, uint64_t pa,
     } else {
         flags = DESC_PAGE_USER_RO;
     }
-    *entry = pa | flags;
+    *entry = pa | flags | (shared ? PTE_SW_SHARED : 0);
 
     dsb_sy();
 
@@ -444,6 +444,16 @@ int mmu_map_user_page_prot(uint64_t l0_pa, uint64_t va, uint64_t pa,
 #endif
     }
     return 1;
+}
+
+int mmu_map_user_page_prot(uint64_t l0_pa, uint64_t va, uint64_t pa,
+                           uint32_t prot, uint16_t asid) {
+    return map_user_page(l0_pa, va, pa, prot, asid, 0);
+}
+
+int mmu_map_user_shared_page(uint64_t l0_pa, uint64_t va, uint64_t pa,
+                             uint16_t asid) {
+    return map_user_page(l0_pa, va, pa, VM_READ | VM_WRITE, asid, 1);
 }
 
 // ============================================================
@@ -515,12 +525,14 @@ static int cow_walk(uint64_t *src, uint64_t *dst, int level) {
             uint16_t refs = phys_get_ref((void *)PA_TO_KVA(pa));
             if (refs == 0 || refs == UINT16_MAX) return 0;
 
-            /* Подготавливаем COW-копию, не меняя родителя до успеха. */
-            if (!(flags & PTE_AP_RDONLY)) {
+            /* Shared pages stay writable in both address spaces. */
+            int shared = (flags & PTE_SW_SHARED) != 0;
+            if (!shared && !(flags & PTE_AP_RDONLY)) {
                 flags |= PTE_SW_COW;
             }
 
-            uint64_t new_entry = pa | flags | PTE_AP_RDONLY;
+            uint64_t new_entry = pa | flags;
+            if (!shared) new_entry |= PTE_AP_RDONLY;
             dst[i] = new_entry;
             phys_inc_ref((void *)PA_TO_KVA(pa));
         } else {

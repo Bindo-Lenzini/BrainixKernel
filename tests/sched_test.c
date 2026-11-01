@@ -1,12 +1,18 @@
 #include <stdint.h>
 #include <stdio.h>
+#include <setjmp.h>
 #include "sched.h"
 #include "mmu.h"
 
 volatile int g_in_syscall;
 
+static jmp_buf scheduler_start;
+static task_t *destroyed_tasks[8];
+static unsigned int destroyed_task_count;
+
 void task_destroy(task_t *task) {
-    (void)task;
+    if (destroyed_task_count < sizeof(destroyed_tasks) / sizeof(destroyed_tasks[0]))
+        destroyed_tasks[destroyed_task_count++] = task;
 }
 
 void mmu_switch_ttbr0(uint64_t l0_pa, uint16_t asid) {
@@ -20,7 +26,19 @@ uint64_t mmu_get_empty_l0_pa(void) {
 
 void jump_to_frame(uint64_t sp) {
     (void)sp;
-    __builtin_trap();
+    longjmp(scheduler_start, 1);
+}
+
+static int task_is_scheduled(task_t *task) {
+    task_t *first = sched_first();
+    if (!first) return 0;
+
+    task_t *current = first;
+    do {
+        if (current == task) return 1;
+        current = current->next;
+    } while (current != first);
+    return 0;
 }
 
 static int check(int condition, const char *description) {
@@ -63,6 +81,34 @@ int main(void) {
     sched_reparent_children(parent.id);
     passed &= check(child.parent_id == 0,
                     "orphan falls back to kernel ownership without a reaper");
+
+    task_t orphan = {.id = 10, .state = TASK_DEAD};
+    task_t adopted = {.id = 11, .state = TASK_READY, .parent_id = 10};
+    sched_add(&orphan);
+    sched_add(&adopted);
+    passed &= check(sched_set_reaper(&init),
+                    "live task can be restored as the orphan reaper");
+
+    if (setjmp(scheduler_start) == 0) sched_start();
+    passed &= check(sched_current() == &init,
+                    "scheduler starts with the first runnable task");
+
+    (void)sched_yield_from_frame(0x1000);
+    passed &= check(task_is_scheduled(&orphan) && destroyed_task_count == 0,
+                    "dead orphan is retained outside syscall scheduling");
+
+    g_in_syscall = 1;
+    (void)sched_yield_from_frame(0x2000);
+    g_in_syscall = 0;
+    passed &= check(!task_is_scheduled(&orphan) &&
+                    destroyed_task_count == 1 &&
+                    destroyed_tasks[0] == &orphan,
+                    "dead orphan is removed and destroyed at syscall scheduling");
+    passed &= check(adopted.parent_id == init.id,
+                    "dead orphan's child is adopted before teardown");
+    passed &= check(sched_current() == &child &&
+                    child.state == TASK_RUNNING,
+                    "scheduler switches to a runnable task after orphan teardown");
 
     return passed ? 0 : 1;
 }

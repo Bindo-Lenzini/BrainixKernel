@@ -1,6 +1,9 @@
 #include "user.h"
 #include "libc.h"
 
+#define IPC_SHARED_TEST_VA 0x30000000ULL
+#define IPC_SHARED_ALIAS_VA (IPC_SHARED_TEST_VA + IPC_SHARED_PAGE_SIZE)
+
 int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "--exec-cycle") == 0) {
         int remaining = atoi(argv[2]);
@@ -163,6 +166,114 @@ int main(int argc, char **argv) {
         puts("[uaccess] pipe setup failed");
     }
 
+    int ipc_bad_fds = 0;
+    int ipc_fds[2];
+    for (int i = 0; i < 16; i++) {
+        if (ipc_pair((int *)(uintptr_t)0x20000000ULL) == -1)
+            ipc_bad_fds++;
+    }
+    int pair_result = ipc_pair(ipc_fds);
+    int ipc_ok = ipc_bad_fds == 16 && pair_result == 0;
+    if (ipc_bad_fds != 16) puts("[ipc] invalid-output rollback failed");
+    if (pair_result != 0) puts("[ipc] endpoint pair creation failed");
+    if (ipc_ok) {
+        ipc_ok = ipc_map(ipc_fds[0],
+                         (void *)(uintptr_t)IPC_SHARED_TEST_VA) == 0 &&
+                 ipc_map(ipc_fds[0],
+                         (void *)(uintptr_t)IPC_SHARED_TEST_VA) == -1;
+        if (!ipc_ok) puts("[ipc] shared page mapping or duplicate rejection failed");
+    }
+    if (ipc_ok) {
+        int ipc_pid = fork();
+        if (ipc_pid == 0) {
+            close(ipc_fds[0]);
+            volatile uint8_t *shared =
+                (volatile uint8_t *)(uintptr_t)IPC_SHARED_TEST_VA;
+            volatile uint8_t *alias =
+                (volatile uint8_t *)(uintptr_t)IPC_SHARED_ALIAS_VA;
+            if (ipc_map(ipc_fds[1],
+                        (void *)(uintptr_t)IPC_SHARED_ALIAS_VA) != 0) {
+                puts("[ipc child] shared alias mapping failed");
+                exit(31);
+            }
+            while (shared[1] != 1) yield();
+            if (alias[0] != 0x53) {
+                puts("[ipc child] inherited shared data mismatch");
+                exit(32);
+            }
+            alias[0] = 0x43;
+            shared[1] = 2;
+
+            char request[IPC_MESSAGE_MAX];
+            long received = IPC_EAGAIN;
+            for (int i = 0; i < 10000 && received == IPC_EAGAIN; i++) {
+                received = ipc_recv(ipc_fds[1], request, sizeof(request));
+                if (received == IPC_EAGAIN) yield();
+            }
+            long reply = ipc_send(ipc_fds[1], "world", 6);
+            if (received != 6 || memcmp(request, "hello", 6) != 0 ||
+                reply != 6) {
+                printf("[ipc child] received=%d reply=%d\n",
+                       (int)received, (int)reply);
+                puts("[ipc child] request validation or reply send failed");
+                exit(30);
+            }
+            exit(0);
+        } else if (ipc_pid > 0) {
+            close(ipc_fds[1]);
+            volatile uint8_t *shared =
+                (volatile uint8_t *)(uintptr_t)IPC_SHARED_TEST_VA;
+            shared[0] = 0x53;
+            shared[1] = 1;
+            while (shared[1] != 2) yield();
+            ipc_ok = shared[0] == 0x43;
+            if (!ipc_ok) puts("[ipc] shared alias writes were not visible");
+
+            long sent = ipc_send(ipc_fds[0], "hello", 6);
+            ipc_ok = ipc_ok && sent == 6;
+            if (!ipc_ok) puts("[ipc] request send failed");
+
+            char response[IPC_MESSAGE_MAX];
+            long received = IPC_EAGAIN;
+            for (int i = 0; i < 10000 && received == IPC_EAGAIN; i++) {
+                received = ipc_recv(ipc_fds[0],
+                                    (void *)(uintptr_t)0x20000000ULL,
+                                    sizeof(response));
+                if (received == -1) break;
+                if (received == IPC_EAGAIN) yield();
+            }
+            if (received != -1) puts("[ipc] invalid receive did not fail as expected");
+            ipc_ok = ipc_ok && received == -1;
+            received = IPC_EAGAIN;
+            for (int i = 0; i < 10000 && received == IPC_EAGAIN; i++) {
+                received = ipc_recv(ipc_fds[0], response, sizeof(response));
+                if (received == IPC_EAGAIN) yield();
+            }
+            int child_status = IPC_EAGAIN;
+            for (int i = 0; i < 10000 && child_status == IPC_EAGAIN; i++) {
+                child_status = wait(ipc_pid);
+                if (child_status == IPC_EAGAIN) yield();
+            }
+            if (received != 6 || memcmp(response, "world", 6) != 0)
+                puts("[ipc] response receive failed");
+            if (child_status != 0) puts("[ipc] child exited with an error");
+            ipc_ok = ipc_ok && received == 6 &&
+                     memcmp(response, "world", 6) == 0 &&
+                     child_status == 0;
+            close(ipc_fds[0]);
+        } else {
+            ipc_ok = 0;
+            close(ipc_fds[0]);
+            close(ipc_fds[1]);
+        }
+    }
+    if (ipc_ok) {
+        puts("[ipc] shared-page alias, fork mapping, and message exchange passed");
+    } else {
+        puts("[ipc] endpoint exchange or rollback failed");
+        failures++;
+    }
+
     // Prime the parent's writable TLB entry before fork.
     static volatile char shared_buf[4096];
 
@@ -275,5 +386,6 @@ int main(int argc, char **argv) {
     }
 
     if (failures == 0) puts("BRAINIX_GUEST_SECURITY_OK");
+    else puts("BRAINIX_GUEST_SECURITY_FAIL");
     return failures == 0 ? 0 : 1;
 }

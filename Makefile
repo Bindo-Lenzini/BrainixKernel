@@ -29,6 +29,7 @@ CFLAGS := --target=$(TARGET) \
           -ffreestanding -nostdlib -O2 -Wall -Wextra \
           -mgeneral-regs-only -fno-stack-protector \
           -fno-pic -fno-pie -fno-builtin -mno-outline-atomics \
+          -MMD -MP \
           -I$(SRC_DIR)
 
 ASFLAGS := --target=$(TARGET)
@@ -66,6 +67,7 @@ C_SOURCES := \
     $(SRC_DIR)/sched.c \
     $(SRC_DIR)/syscall.c \
     $(SRC_DIR)/pipe.c \
+    $(SRC_DIR)/ipc.c \
     $(SRC_DIR)/socket.c \
     $(SRC_DIR)/protosw.c \
     $(SRC_DIR)/in_proto.c \
@@ -228,12 +230,19 @@ $(BUILD_DIR)/mmu_cow_test: tests/mmu_cow_test.c $(SRC_DIR)/mmu.c \
 	    tests/mmu_cow_test.c $(SRC_DIR)/mmu.c \
 	    $(HOST_GC_SECTIONS) -o $@
 
+$(BUILD_DIR)/ipc_test: tests/ipc_test.c $(SRC_DIR)/ipc.c $(SRC_DIR)/ipc.h | $(BUILD_DIR)
+	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -I$(SRC_DIR) \
+	    tests/ipc_test.c $(SRC_DIR)/ipc.c -o $@
+
+-include $(C_OBJS:.o=.d) $(GEN_OBJS:.o=.d)
+
 host-test: $(BUILD_DIR)/elf_test $(BUILD_DIR)/bkfs_test $(BUILD_DIR)/sched_test \
-           $(BUILD_DIR)/mmu_cow_test
+           $(BUILD_DIR)/mmu_cow_test $(BUILD_DIR)/ipc_test
 	$(BUILD_DIR)/elf_test
 	$(BUILD_DIR)/bkfs_test
 	$(BUILD_DIR)/sched_test
 	$(BUILD_DIR)/mmu_cow_test
+	$(BUILD_DIR)/ipc_test
 
 clean:
 	rm -rf $(BUILD_DIR)

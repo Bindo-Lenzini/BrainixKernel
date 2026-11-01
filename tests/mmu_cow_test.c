@@ -9,6 +9,8 @@
 #define PTE_VALID       (1ull << 0)
 #define PTE_AP_RDONLY   (1ull << 7)
 #define PTE_SW_COW      (1ull << 55)
+#define PTE_SW_SHARED   (1ull << 56)
+#define PTE_AP_USER_RW  (1ull << 6)
 #define PTE_PA_MASK     0x0000FFFFFFFFF000ULL
 
 typedef struct {
@@ -193,5 +195,51 @@ int main(void) {
     mmu_destroy_user_as(parent_l0, 1);
     passed &= check(active_pages() == 0,
                     "COW test teardown releases all address-space pages");
+
+    const uint64_t shared_va = USER_HEAP_BASE;
+    parent_l0 = mmu_create_user_as();
+    uint8_t *shared_backing = phys_alloc_page();
+    if (!parent_l0 || !shared_backing) {
+        fprintf(stderr, "FAIL: shared-page fixture allocation\n");
+        return 1;
+    }
+    shared_backing[0] = 0x33;
+    phys_inc_ref(shared_backing);
+    if (!mmu_map_user_shared_page(parent_l0, shared_va,
+                                  KVA_TO_PA(shared_backing), 1)) {
+        fprintf(stderr, "FAIL: map shared page\n");
+        return 1;
+    }
+    child_l0 = mmu_create_user_as();
+    if (!child_l0 ||
+        !mmu_clone_user_as_cow(parent_l0, 1, child_l0, 2)) {
+        fprintf(stderr, "FAIL: clone address space with shared page\n");
+        return 1;
+    }
+    uint64_t *shared_parent_entry = leaf_entry(parent_l0, shared_va);
+    uint64_t *shared_child_entry = leaf_entry(child_l0, shared_va);
+    passed &= check(shared_parent_entry && shared_child_entry &&
+                    ((*shared_parent_entry & PTE_PA_MASK) ==
+                     (*shared_child_entry & PTE_PA_MASK)) &&
+                    (*shared_parent_entry & PTE_SW_SHARED) &&
+                    (*shared_child_entry & PTE_SW_SHARED) &&
+                    !(*shared_child_entry & (PTE_AP_RDONLY | PTE_SW_COW)) &&
+                    (*shared_child_entry & PTE_AP_USER_RW) &&
+                    phys_get_ref(shared_backing) == 3,
+                    "COW fork preserves shared writable mapping and references");
+    shared_backing[0] = 0x7C;
+    passed &= check(!mmu_cow_fault(child_l0, 2, shared_va) &&
+                    PA_TO_KVA(*shared_child_entry & PTE_PA_MASK) ==
+                        shared_backing &&
+                    shared_backing[0] == 0x7C,
+                    "shared page writes remain visible without COW fault");
+
+    mmu_destroy_user_as(child_l0, 2);
+    mmu_destroy_user_as(parent_l0, 1);
+    passed &= check(phys_get_ref(shared_backing) == 1,
+                    "shared backing survives address-space teardown");
+    phys_free_page(shared_backing);
+    passed &= check(active_pages() == 0,
+                    "shared-page reference teardown releases all pages");
     return passed ? 0 : 1;
 }

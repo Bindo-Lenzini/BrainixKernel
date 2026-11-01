@@ -20,6 +20,7 @@
 #include "net.h"
 #include "tcp.h"
 #include "heap.h"
+#include "ipc.h"
 
 extern void uart_putc(char c);
 extern void uart_puts(const char *s);
@@ -56,6 +57,8 @@ static void fd_clear_slot(task_fd_t *f) {
     f->pipe_idx   = -1;
     f->sock_idx   = -1;
     f->tcp_idx    = -1;
+    f->ipc_idx    = -1;
+    f->ipc_endpoint = 0;
 }
 
 static int fd_access_mode(const task_fd_t *f) {
@@ -345,6 +348,107 @@ static uint64_t sys_pipe(const int *user_fds) {
         pipe_close_write(idx);
         fd_clear_slot(fr);
         fd_clear_slot(fw);
+        return (uint64_t)-1;
+    }
+    return 0;
+}
+
+static uint64_t sys_ipc_pair(int *user_fds) {
+    if (!user_fds) return (uint64_t)-1;
+    int idx = ipc_alloc();
+    if (idx < 0) return (uint64_t)-1;
+
+    int first_fd = fd_alloc_slot();
+    if (first_fd < 0) {
+        ipc_abort(idx);
+        return (uint64_t)-1;
+    }
+    task_fd_t *first = fd_slot(first_fd);
+    first->used = 1;
+    first->src = TFD_IPC;
+    first->flags = 0;
+    first->ipc_idx = idx;
+    first->ipc_endpoint = 0;
+
+    int second_fd = fd_alloc_slot();
+    if (second_fd < 0) {
+        fd_clear_slot(first);
+        ipc_abort(idx);
+        return (uint64_t)-1;
+    }
+    task_fd_t *second = fd_slot(second_fd);
+    second->used = 1;
+    second->src = TFD_IPC;
+    second->flags = 0;
+    second->ipc_idx = idx;
+    second->ipc_endpoint = 1;
+
+    ipc_ref(idx, 0);
+    ipc_ref(idx, 1);
+    int user_pair[2] = {first_fd, second_fd};
+    if (copy_to_user(user_fds, user_pair, sizeof(user_pair)) < 0) {
+        task_fd_release(first);
+        task_fd_release(second);
+        return (uint64_t)-1;
+    }
+    return 0;
+}
+
+static uint64_t sys_ipc_send(int fd, const void *user_message, uint64_t len) {
+    task_fd_t *descriptor = fd_used(fd);
+    if (!descriptor || descriptor->src != TFD_IPC || !user_message ||
+        len == 0 || len > IPC_MESSAGE_MAX) {
+        return (uint64_t)-1;
+    }
+
+    uint8_t message[IPC_MESSAGE_MAX];
+    if (copy_from_user(message, user_message, len) < 0)
+        return (uint64_t)-1;
+    int result = ipc_send(descriptor->ipc_idx, descriptor->ipc_endpoint,
+                          message, (uint32_t)len);
+    return result < 0 ? (uint64_t)(int64_t)result : (uint64_t)result;
+}
+
+static uint64_t sys_ipc_recv(int fd, void *user_message, uint64_t capacity) {
+    task_fd_t *descriptor = fd_used(fd);
+    if (!descriptor || descriptor->src != TFD_IPC || !user_message ||
+        capacity == 0 || capacity > IPC_MESSAGE_MAX) {
+        return (uint64_t)-1;
+    }
+
+    uint8_t message[IPC_MESSAGE_MAX];
+    int result = ipc_peek(descriptor->ipc_idx, descriptor->ipc_endpoint,
+                          message, (uint32_t)capacity);
+    if (result <= 0) return (uint64_t)(int64_t)result;
+    if (copy_to_user(user_message, message, (uint32_t)result) < 0)
+        return (uint64_t)-1;
+    if (!ipc_consume(descriptor->ipc_idx, descriptor->ipc_endpoint))
+        return (uint64_t)-1;
+    return (uint64_t)result;
+}
+
+static uint64_t sys_ipc_map(int fd, uint64_t user_va) {
+    task_fd_t *descriptor = fd_used(fd);
+    task_t *cur = sched_current();
+    if (!descriptor || descriptor->src != TFD_IPC ||
+        !cur || !cur->ttbr0_pa) {
+        return (uint64_t)-1;
+    }
+
+    void *page = ipc_shared_page(descriptor->ipc_idx);
+    if (!page) return (uint64_t)-1;
+    uint16_t refs = phys_get_ref(page);
+    if (refs == 0 || refs == UINT16_MAX) return (uint64_t)-1;
+
+    phys_inc_ref(page);
+    if (phys_get_ref(page) != (uint16_t)(refs + 1)) {
+        phys_free_page(page);
+        return (uint64_t)-1;
+    }
+
+    if (!mmu_map_user_shared_page(cur->ttbr0_pa, user_va,
+                                  KVA_TO_PA(page), cur->asid)) {
+        phys_free_page(page);
         return (uint64_t)-1;
     }
     return 0;
@@ -1040,6 +1144,9 @@ uint64_t syscall_dispatch(uint64_t sp) {
     if (nr == SYS_BRK)      ret = sys_brk(a0);
     if (nr == SYS_READDIR)  ret = sys_readdir(sp, a0, (const char *)a1, a2);
     if (nr == SYS_PIPE)     ret = sys_pipe((const int *)a0);
+    if (nr == SYS_IPC_PAIR) ret = sys_ipc_pair((int *)a0);
+    if (nr == SYS_IPC_SEND) ret = sys_ipc_send((int)a0, (const void *)a1, a2);
+    if (nr == SYS_IPC_RECV) ret = sys_ipc_recv((int)a0, (void *)a1, a2);
     if (nr == SYS_DUP2)     ret = sys_dup2((int)a0, (int)a1);
     if (nr == SYS_SOCKET)   ret = sys_socket((int)a0, (int)a1, (int)a2);
     if (nr == SYS_BIND)     ret = sys_bind((int)a0, (uint16_t)a1);
@@ -1059,6 +1166,7 @@ uint64_t syscall_dispatch(uint64_t sp) {
     if (nr == SYS_SETGROUPS) ret = sys_setgroups((int)a0, (const gid_t *)a1);
     if (nr == SYS_CHMOD)    ret = sys_chmod((const char *)a0, a1);
     if (nr == SYS_CHOWN)    ret = sys_chown((const char *)a0, a1, a2);
+    if (nr == SYS_IPC_MAP)  ret = sys_ipc_map((int)a0, a1);
 
     f[0] = ret;
     return sp;

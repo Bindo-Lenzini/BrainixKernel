@@ -23,6 +23,7 @@
 #define TFD_PIPE_WRITE  4
 #define TFD_SOCKET      5
 #define TFD_TCP         6
+#define TFD_IPC         7
 
 typedef struct {
     int      used;
@@ -44,6 +45,10 @@ typedef struct {
 
     // TFD_TCP:
     int      tcp_idx;
+
+    // TFD_IPC:
+    int      ipc_idx;
+    uint8_t  ipc_endpoint;
 } task_fd_t;
 
 typedef enum {

@@ -22,6 +22,13 @@
 #define SYS_RECVFROM 15
 #define SYS_BIND     16
 #define SYS_CONNECT  17
+#define SYS_IPC_PAIR 20
+#define SYS_IPC_SEND 21
+#define SYS_IPC_RECV 22
+#define SYS_IPC_MAP  31
+#define IPC_EAGAIN   (-2)
+#define IPC_MESSAGE_MAX 256
+#define IPC_SHARED_PAGE_SIZE 4096
 #define SYS_GETUID   23
 #define SYS_GETEUID  24
 #define SYS_GETGID   25
@@ -60,6 +67,10 @@ int  fork  (void);
 int  wait  (int pid);
 int  readdir(int idx, char *buf, int max);
 int  pipe  (int fds[2]);
+int  ipc_pair(int fds[2]);
+long ipc_send(int fd, const void *message, unsigned long len);
+long ipc_recv(int fd, void *message, unsigned long capacity);
+int  ipc_map(int fd, void *address);
 int  dup2  (int oldfd, int newfd);
 int  socket(int domain, int type, int protocol);
 int  bind  (int fd, unsigned short port_be);

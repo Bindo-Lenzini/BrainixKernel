@@ -13,6 +13,10 @@
 .global wait
 .global readdir
 .global pipe
+.global ipc_pair
+.global ipc_send
+.global ipc_recv
+.global ipc_map
 .global dup2
 .global socket
 .global bind
@@ -83,6 +87,26 @@ readdir:
 
 pipe:
     mov x8, #11
+    svc #0
+    ret
+
+ipc_pair:
+    mov x8, #20
+    svc #0
+    ret
+
+ipc_send:
+    mov x8, #21
+    svc #0
+    ret
+
+ipc_recv:
+    mov x8, #22
+    svc #0
+    ret
+
+ipc_map:
+    mov x8, #31
     svc #0
     ret
 
