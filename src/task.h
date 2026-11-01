@@ -66,6 +66,7 @@ typedef struct task {
     task_state_t  state;
     struct task  *next;
     int           to_window;
+    int           console_server;
     uint64_t      kstack_base;
     uint64_t      ttbr0_pa;
     uint16_t      asid;
@@ -94,6 +95,7 @@ task_t *task_fork_clone(task_t *parent, uint64_t new_l0, uint16_t new_asid,
                        uint64_t parent_frame_sp);
 void task_fd_retain(task_fd_t *fd);
 void task_fd_release(task_fd_t *fd);
+int task_install_ipc_endpoint(task_t *task, int ipc_idx, uint8_t endpoint);
 void task_destroy(task_t *t);
 
 #endif

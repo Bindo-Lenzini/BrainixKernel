@@ -16,6 +16,7 @@ SELFTEST_OK = b"BRAINIX_SELFTEST_OK:"
 SELFTEST_FAIL = b"BRAINIX_SELFTEST_FAIL:"
 UACCESS_OK = b"BRAINIX_UACCESS_SELFTEST_OK"
 CREDENTIALS_OK = b"BRAINIX_CREDENTIAL_SELFTEST_OK"
+CONSOLE_SERVER_READY = b"BRAINIX_CONSOLE_SERVER_READY"
 USER_SHELL_READY = b"Brainix user-shell v0.4"
 GUEST_SECURITY_OK = b"BRAINIX_GUEST_SECURITY_OK"
 GUEST_SECURITY_FAIL = b"BRAINIX_GUEST_SECURITY_FAIL"
@@ -147,7 +148,7 @@ def main():
 
             if all(marker in log_data for marker in
                    (BOOT_MARKER, SELFTEST_START, SELFTEST_OK, UACCESS_OK,
-                    CREDENTIALS_OK, USER_SHELL_READY)):
+                    CREDENTIALS_OK, CONSOLE_SERVER_READY, USER_SHELL_READY)):
                 if process.poll() is not None:
                     print("SMOKE_FAIL: QEMU_EXITED_AFTER_MARKERS (exit={})".format(
                         process.returncode
@@ -172,7 +173,7 @@ def main():
                         process.returncode
                     ))
                     return 7
-                print("SMOKE_OK: boot, kernel selftests, credentials, user access and COW passed")
+                print("SMOKE_OK: boot, console server, kernel selftests, credentials, user access and COW passed")
                 return 0
 
             if process.poll() is not None:
@@ -199,6 +200,8 @@ def main():
             result = "UACCESS_SELFTEST_INCOMPLETE"
         elif CREDENTIALS_OK not in log_data:
             result = "CREDENTIAL_SELFTEST_INCOMPLETE"
+        elif CONSOLE_SERVER_READY not in log_data:
+            result = "CONSOLE_SERVER_NOT_READY"
         elif USER_SHELL_READY not in log_data:
             result = "USER_SHELL_NOT_READY"
         elif not guest_test_sent:

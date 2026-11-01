@@ -41,6 +41,7 @@
 #include "mmu.h"
 #include "elf.h"
 #include "uaccess.h"
+#include "ipc.h"
 
 extern volatile int g_in_syscall;
 
@@ -996,8 +997,20 @@ void kernel_main(uint64_t dtb) {
 
     // User-space shell: sh.elf. Запускаем как U-shell (stdin/stdout через UART).
     const initrd_file_t *elf_file = initrd_find("sh.elf");
+    const initrd_file_t *console_file = initrd_find("console.elf");
+    task_t *console_task = 0;
     task_t *ue = 0;
-    if (elf_file) {
+    if (console_file && elf_file) {
+        console_task = task_create_from_elf(
+            "console", console_file->data, console_file->size);
+        if (!console_task) panic("failed to create console server");
+
+        int console_ipc = ipc_alloc();
+        if (console_ipc < 0) panic("failed to allocate console IPC channel");
+        int server_fd = task_install_ipc_endpoint(console_task, console_ipc, 0);
+        if (server_fd < 0) panic("failed to install console server endpoint");
+        console_task->console_server = 1;
+
         uart_puts("  [elf] sh.elf size=");
         uart_putu(elf_file->size);
         uart_puts(" entry-loading...\n");
@@ -1013,12 +1026,16 @@ void kernel_main(uint64_t dtb) {
                 panic("user task has unexpected privileges");
             }
             uart_puts("BRAINIX_CREDENTIAL_SELFTEST_OK\n");
+            int shell_fd = task_install_ipc_endpoint(ue, console_ipc, 1);
+            if (shell_fd < 0) panic("failed to install shell IPC endpoint");
+            syscall_console_configure(console_ipc);
         }
     } else {
-        uart_puts("  [elf] sh.elf not found in initrd\n");
+        panic("console.elf or sh.elf not found in initrd");
     }
 
     sched_add(a);
+    sched_add(console_task);
     sched_add(ue);
     if (ue && !sched_set_reaper(ue)) panic("failed to register init reaper");
 //     sched_add(uf);

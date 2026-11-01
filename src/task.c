@@ -63,6 +63,7 @@ static task_t *alloc_task(const char *name,
     t->state      = TASK_READY;
     t->next       = 0;
     t->to_window  = 0;
+    t->console_server = 0;
     t->kstack_base = (uint64_t)kstack_kva;
     t->ttbr0_pa   = 0;
     t->asid       = 0;
@@ -89,6 +90,34 @@ void task_fd_retain(task_fd_t *fd) {
     if (fd->src == TFD_SOCKET) sock_ref(fd->sock_idx);
     if (fd->src == TFD_TCP) tcp_ref(fd->tcp_idx);
     if (fd->src == TFD_IPC) ipc_ref(fd->ipc_idx, fd->ipc_endpoint);
+}
+
+int task_install_ipc_endpoint(task_t *task, int ipc_idx, uint8_t endpoint) {
+    if (!task || endpoint > 1 || !ipc_shared_page(ipc_idx)) return -1;
+
+    int fd = -1;
+    for (int i = 3; i < TASK_MAX_FDS; i++) {
+        if (!task->fds[i].used) {
+            fd = i;
+            break;
+        }
+    }
+    if (fd < 0) return -1;
+
+    task_fd_t *descriptor = &task->fds[fd];
+    descriptor->used = 1;
+    descriptor->src = TFD_IPC;
+    descriptor->flags = 0;
+    descriptor->offset = 0;
+    descriptor->file = 0;
+    descriptor->bkfs_inode = -1;
+    descriptor->pipe_idx = -1;
+    descriptor->sock_idx = -1;
+    descriptor->tcp_idx = -1;
+    descriptor->ipc_idx = ipc_idx;
+    descriptor->ipc_endpoint = endpoint;
+    ipc_ref(ipc_idx, endpoint);
+    return fd;
 }
 
 void task_fd_release(task_fd_t *fd) {

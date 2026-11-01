@@ -63,8 +63,13 @@ compliance, complete functionality, or comprehensive testing.
   across COW `fork`.
 - User tasks default to UID/GID `1000` and empty effective/permitted capability
   masks; forked tasks inherit credentials.
-- A small userland including a shell, basic utilities, and network examples.
+- A small userland including a shell, basic utilities, network examples, and a
+  user-space console-routing service connected to the shell over IPC.
 - Experimental virtual-device, storage, network, and graphical desktop support.
+
+The console service routes terminal input to the shell and shell output to the
+UART through IPC. PL011 register access, interrupt handling, and the UART
+receive buffer remain in the kernel; this is not yet a user-space UART driver.
 
 ### IPC API
 
@@ -80,7 +85,7 @@ page-aligned user address. The mapping remains writable and shared after
 
 ## UPDATE LOG
 
-### 2026-11-01 — IPC messages and shared pages
+### 2026-11-01 — IPC, shared pages, and user-space console routing
 
 - Added paired bidirectional IPC endpoints with bounded FIFO message queues,
   explicit `EAGAIN` when a queue is full or empty, and EOF after peer closure.
@@ -97,11 +102,17 @@ page-aligned user address. The mapping remains writable and shared after
   user copies.
 - COW faults during validated kernel-to-user copies are resolved for the active
   task, allowing IPC receives into forked user buffers.
-- Host regression tests and the headless QEMU smoke test pass with the IPC
-  implementation.
-- Receive is still nonblocking, and endpoint transfer between unrelated
-  processes, capability authorization, and moving the console driver to
-  user-space are not implemented yet.
+- Added a `console.elf` user task with a kernel-created IPC endpoint pair.
+  UART input is forwarded to the shell and shell output is relayed to the UART;
+  the shell continues to use its ordinary stdin/stdout descriptors.
+- Kept UART MMIO, interrupt handling, and receive buffering in the kernel HAL.
+  The console service owns routing, but does not directly drive UART hardware.
+- The headless QEMU smoke test now requires the console-server ready marker and
+  verifies the shell's test command through the routed input/output path.
+- Host regression tests, the kernel build, and the headless QEMU smoke test pass.
+- IPC receive is still nonblocking, and endpoint transfer between unrelated
+  processes, capability authorization, and moving the physical UART driver to
+  user-space remain future work.
 
 ## Build and run
 
@@ -168,7 +179,7 @@ snapshot; guest disk writes are not persisted to `disk.img`.
 | Check | What it covers |
 | --- | --- |
 | `make host-test` | ELF parser cases, BKFS permissions, malformed block-pointer rejection, blank-disk detection and v2 migration, scheduler reaper adoption/fallback and dead-orphan teardown, IPC queue and shared-page lifetime semantics, and COW allocation-failure rollback/shared-mapping behavior |
-| `make smoke` | QEMU boot, kernel self-tests, credentials, BKFS user-file creation, `chmod`/`chown`, execute-bit denial, supplementary-group pointer/range/privilege checks, initrd write denial, invalid open flags, user-pointer handling, pipe and IPC rollback, shared-page aliases across `fork`, forked IPC message exchange, COW isolation, 260 repeated `exec` and fork/wait cycles, and a faulted-child teardown check |
+| `make smoke` | QEMU boot and console-server startup, kernel self-tests, credentials, BKFS user-file creation, `chmod`/`chown`, execute-bit denial, supplementary-group pointer/range/privilege checks, initrd write denial, invalid open flags, user-pointer handling, pipe and IPC rollback, shared-page aliases across `fork`, forked IPC message exchange, COW isolation, 260 repeated `exec` and fork/wait cycles, and a faulted-child teardown check |
 | GitHub Actions | Host tests, kernel build, and the headless QEMU smoke target |
 
 Tests cover selected regression scenarios. They do not prove the absence of
@@ -207,14 +218,13 @@ Do not treat passing tests or this feature list as a security guarantee.
 
 Near-term development priorities:
 
-1. Move the console driver behind a user-space server and IPC endpoint.
-2. Extend IPC with blocking receive and controlled endpoint transfer between
+1. Extend IPC with blocking receive and controlled endpoint transfer between
    independent processes.
-3. Audit syscall boundaries, authorization checks, and partial-I/O behavior.
-4. Add malformed-input, allocation-failure, and fuzz tests for BKFS, networking,
+2. Audit syscall boundaries, authorization checks, and partial-I/O behavior.
+3. Add malformed-input, allocation-failure, and fuzz tests for BKFS, networking,
    and device interfaces.
-5. Extend memory-protection review to kernel mappings and physical aliases.
-6. Improve CI coverage, then pursue scheduler, synchronization, and userland
+4. Extend memory-protection review to kernel mappings and physical aliases.
+5. Improve CI coverage, then pursue scheduler, synchronization, and userland
    improvements.
 
 Longer-term goals include `mmap`, demand paging, a page cache, SMP support,

@@ -37,6 +37,7 @@
 #define SYS_CHOWN     30
 #define SYS_IPC_MAP   31
 
+void syscall_console_configure(int ipc_idx);
 uint64_t syscall_dispatch(uint64_t sp);
 
 #endif

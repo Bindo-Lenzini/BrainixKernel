@@ -130,7 +130,7 @@ USER_OBJS_BASE := \
     $(BUILD_DIR)/user/libc.o \
     $(BUILD_DIR)/user/dns.o
 
-USER_PROGS := test sh echo wc ls cat whoami udp_send udp_echo host tcp_connect wget
+USER_PROGS := test sh console echo wc ls cat whoami udp_send udp_echo host tcp_connect wget
 
 .PHONY: all clean run smoke host-test
 

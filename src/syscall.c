@@ -29,6 +29,14 @@ extern int  uart_rx_pop(uint8_t *out);
 
 #define KIO_BUF 512
 #define FD_BASE 3     // 0,1,2 — стандартные
+#define CONSOLE_IPC_ENDPOINT 1
+
+static int g_console_ipc_idx = -1;
+
+void syscall_console_configure(int ipc_idx) {
+    if (ipc_idx < 0 || !ipc_shared_page(ipc_idx)) return;
+    g_console_ipc_idx = ipc_idx;
+}
 
 // ------------------------------------------------------------------
 // Доступ к fd-таблице текущей задачи.
@@ -91,6 +99,24 @@ static uint64_t sys_write(int fd, const void *user_buf, size_t len) {
         task_t *cur = sched_current();
         if (cur && cur->to_window) {
             ksh_out_write((const char *)kbuf, (uint32_t)len);
+        } else if (g_console_ipc_idx >= 0 && cur &&
+                   !cur->console_server) {
+            size_t sent = 0;
+            while (sent < len) {
+                uint32_t chunk = (uint32_t)(len - sent);
+                if (chunk > IPC_MESSAGE_MAX) chunk = IPC_MESSAGE_MAX;
+                int result = ipc_send(g_console_ipc_idx,
+                                      CONSOLE_IPC_ENDPOINT,
+                                      kbuf + sent, chunk);
+                if (result < 0) {
+                    if (sent != 0) return sent;
+                    return result == IPC_EAGAIN
+                        ? (uint64_t)(int64_t)IPC_EAGAIN : (uint64_t)-1;
+                }
+                sent += (size_t)result;
+                if ((uint32_t)result < chunk) break;
+            }
+            return sent;
         } else {
             for (size_t i = 0; i < len; i++) uart_putc((char)kbuf[i]);
         }
@@ -148,13 +174,28 @@ static uint64_t sys_read(int fd, void *user_buf, size_t len) {
     if (!f && fd == 0) {
         if (len > KIO_BUF) len = KIO_BUF;
         uint8_t kbuf[KIO_BUF];
+        task_t *cur = sched_current();
+        if (g_console_ipc_idx >= 0 && cur && !cur->console_server &&
+            !cur->to_window) {
+            uint32_t capacity = (uint32_t)len;
+            if (capacity > IPC_MESSAGE_MAX) capacity = IPC_MESSAGE_MAX;
+            int result = ipc_peek(g_console_ipc_idx,
+                                 CONSOLE_IPC_ENDPOINT, kbuf, capacity);
+            if (result <= 0) return (uint64_t)(int64_t)result;
+            if (copy_to_user(user_buf, kbuf, (size_t)result) < 0)
+                return (uint64_t)-1;
+            if (!ipc_consume(g_console_ipc_idx, CONSOLE_IPC_ENDPOINT))
+                return (uint64_t)-1;
+            return (uint64_t)result;
+        }
+
         size_t got = 0;
         while (got < len) {
             uint8_t b;
             if (!uart_rx_pop(&b)) break;
             if (b == '\r') b = '\n';
             kbuf[got++] = b;
-            if (b == '\n') break;
+            if ((!cur || !cur->console_server) && b == '\n') break;
         }
         if (got == 0) return 0;
         if (copy_to_user(user_buf, kbuf, got) < 0) return (uint64_t)-1;
