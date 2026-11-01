@@ -115,12 +115,17 @@ page-aligned user address. The mapping remains writable and shared after
 `fork`; closing endpoints does not unmap existing mappings.
 
 File descriptors returned by `open` carry `FD_RIGHT_READ` and/or
-`FD_RIGHT_WRITE`, constrained by the requested open mode and file permissions.
-`fd_restrict(fd, rights)` can remove rights from an initrd or BKFS descriptor,
-including reducing it to no access; it rejects unknown rights, non-file
-descriptors, and attempts to add authority. Duplicating or forking a restricted
-descriptor preserves its reduced rights. File descriptor delegation between
-processes is not implemented yet.
+`FD_RIGHT_WRITE`, plus `FD_RIGHT_DELEGATE`, constrained by the requested open
+mode and file permissions. `fd_restrict(fd, rights)` can remove rights from an
+initrd or BKFS descriptor, including reducing it to no access; it rejects
+unknown rights, non-file descriptors, and attempts to add authority.
+Duplicating or forking a restricted descriptor preserves its reduced rights.
+`ipc_send_file`/`ipc_recv_file` transfer read-only initrd descriptors through
+IPC with a selected subset of `READ`/`DELEGATE` rights and the current file
+offset. The sender retains its descriptor. An initrd file remains valid after
+the sender closes it because initrd contents are immutable and kernel-resident.
+BKFS descriptor transfer is not supported yet; it needs stable inode lifetime
+management so queued capabilities cannot outlive or alias a deleted inode.
 
 ## UPDATE LOG
 
@@ -140,6 +145,10 @@ processes is not implemented yet.
 - Added explicit read/write rights to opened initrd and BKFS descriptors.
   `fd_restrict` only permits attenuation, and `dup2`/`fork` preserve reduced
   rights; guest tests check denied reads/writes and reject rights restoration.
+- Added IPC transfer for read-only initrd file capabilities. Delegation carries
+  the file offset and a non-escalating rights subset; ordinary and endpoint
+  receive APIs cannot consume file-bearing messages, and invalid output pointers
+  leave the queued capability intact. BKFS transfer awaits stable inode pins.
 - Shared mappings carry an explicit software PTE bit and stay writable across
   COW fork. Mapping and address-space teardown update physical-page references;
   closing endpoints releases the channel's owner reference without invalidating
@@ -236,7 +245,7 @@ snapshot; guest disk writes are not persisted to `disk.img`.
 | Check | What it covers |
 | --- | --- |
 | `make host-test` | ELF parser cases, BKFS permissions, malformed block-pointer rejection, blank-disk detection and v2 migration, scheduler reaper adoption/fallback and dead-orphan teardown, IPC queue, endpoint delegation/cycle prevention and shared-page lifetime semantics, and COW allocation-failure rollback/shared-mapping behavior |
-| `make smoke` | QEMU boot, console-server startup and shell input/output routed over IPC, kernel self-tests, credentials, BKFS user-file creation, `chmod`/`chown`, execute-bit denial, supplementary-group pointer/range/privilege checks, initrd write denial, invalid open flags, file descriptor rights attenuation across `dup2`/`fork`, user-pointer handling, pipe and IPC rollback, endpoint creation-policy validation, restricted endpoint operations and delegation, shared-page aliases across `fork`, IPC message exchange, COW isolation, 260 repeated `exec` and fork/wait cycles, and a faulted-child teardown check |
+| `make smoke` | QEMU boot, console-server startup and shell input/output routed over IPC, kernel self-tests, credentials, BKFS user-file creation, `chmod`/`chown`, execute-bit denial, supplementary-group pointer/range/privilege checks, initrd write denial, invalid open flags, file descriptor rights attenuation across `dup2`/`fork`, read-only initrd capability transfer over IPC, user-pointer handling, pipe and IPC rollback, endpoint creation-policy validation, restricted endpoint operations and delegation, shared-page aliases across `fork`, IPC message exchange, COW isolation, 260 repeated `exec` and fork/wait cycles, and a faulted-child teardown check |
 | GitHub Actions | Host tests, kernel build, and the headless QEMU smoke target |
 
 Tests cover selected regression scenarios. They do not prove the absence of

@@ -316,7 +316,7 @@ static uint64_t sys_open(const char *user_name, int flags) {
             f->pipe_idx   = -1;
             f->file_rights =
                 (access_mode != BKFS_O_WRONLY ? FD_RIGHT_READ : 0) |
-                (writable ? FD_RIGHT_WRITE : 0);
+                (writable ? FD_RIGHT_WRITE : 0) | FD_RIGHT_DELEGATE;
             return (uint64_t)fd;
         }
     }
@@ -331,7 +331,7 @@ static uint64_t sys_open(const char *user_name, int flags) {
         f->file       = file;
         f->bkfs_inode = -1;
         f->pipe_idx   = -1;
-        f->file_rights = FD_RIGHT_READ;
+        f->file_rights = FD_RIGHT_READ | FD_RIGHT_DELEGATE;
         return (uint64_t)fd;
     }
 
@@ -590,6 +590,118 @@ static uint64_t sys_ipc_recv_endpoint(int fd, void *user_message,
                                    transfer_rights) < 0) {
         ipc_close(transfer_idx, transfer_endpoint);
         return (uint64_t)-1;
+    }
+    sched_wake_blocked();
+    return (uint64_t)result;
+}
+
+static uint64_t sys_ipc_send_file(int fd, const void *user_message,
+                                  uint64_t len, int transfer_fd,
+                                  uint64_t transfer_rights) {
+    task_fd_t *descriptor = fd_used(fd);
+    task_fd_t *transfer = fd_used(transfer_fd);
+    if (!descriptor || descriptor->src != TFD_IPC ||
+        !(descriptor->ipc_rights & IPC_RIGHT_SEND) ||
+        !(descriptor->ipc_rights & IPC_RIGHT_DELEGATE) ||
+        !transfer || transfer->src != TFD_INITRD ||
+        !(transfer->file_rights & FD_RIGHT_DELEGATE) || !user_message ||
+        transfer_rights == 0 ||
+        (transfer_rights & ~IPC_FILE_RIGHT_ALL) != 0 ||
+        (transfer_rights & ~transfer->file_rights) != 0 ||
+        (transfer_rights & FD_RIGHT_WRITE) != 0 ||
+        len == 0 || len > IPC_MESSAGE_MAX) {
+        return (uint64_t)-1;
+    }
+
+    uint8_t message[IPC_MESSAGE_MAX];
+    if (copy_from_user(message, user_message, len) < 0)
+        return (uint64_t)-1;
+    int result = ipc_send_initrd(descriptor->ipc_idx,
+                                 descriptor->ipc_endpoint, message,
+                                 (uint32_t)len,
+                                 (uintptr_t)transfer->file,
+                                 transfer->offset,
+                                 (uint8_t)transfer_rights);
+    if (result > 0) sched_wake_blocked();
+    return result < 0 ? (uint64_t)(int64_t)result : (uint64_t)result;
+}
+
+static uint64_t sys_ipc_recv_file(int fd, void *user_message,
+                                  uint64_t capacity, int *user_received_fd,
+                                  uint32_t *user_received_rights) {
+    task_fd_t *descriptor = fd_used(fd);
+    task_t *current = sched_current();
+    if (!descriptor || descriptor->src != TFD_IPC ||
+        !(descriptor->ipc_rights & IPC_RIGHT_RECEIVE) || !user_message ||
+        !user_received_fd || !user_received_rights || !current ||
+        capacity == 0 || capacity > IPC_MESSAGE_MAX) {
+        return (uint64_t)-1;
+    }
+
+    uint8_t message[IPC_MESSAGE_MAX];
+    uintptr_t transfer_file = 0;
+    uint32_t transfer_offset = 0;
+    uint8_t transfer_rights = 0;
+    int result = ipc_peek_initrd(descriptor->ipc_idx,
+                                 descriptor->ipc_endpoint, message,
+                                 (uint32_t)capacity, &transfer_file,
+                                 &transfer_offset, &transfer_rights);
+    if (result <= 0) return (uint64_t)(int64_t)result;
+
+    const initrd_file_t *file = (const initrd_file_t *)transfer_file;
+    if (file && (transfer_offset > file->size ||
+                 transfer_rights == 0 ||
+                 (transfer_rights & ~IPC_FILE_RIGHT_ALL) != 0 ||
+                 (transfer_rights & FD_RIGHT_WRITE) != 0)) {
+        return (uint64_t)-1;
+    }
+
+    int new_fd = -1;
+    if (file) {
+        for (int candidate = FD_BASE; candidate < TASK_MAX_FDS; candidate++) {
+            if (!current->fds[candidate].used) {
+                new_fd = candidate;
+                break;
+            }
+        }
+        if (new_fd < 0) return (uint64_t)-1;
+    }
+
+    uint32_t user_rights = transfer_rights;
+    if (copy_to_user(user_message, message, (uint32_t)result) < 0 ||
+        copy_to_user(user_received_fd, &new_fd, sizeof(new_fd)) < 0 ||
+        copy_to_user(user_received_rights, &user_rights,
+                     sizeof(user_rights)) < 0) {
+        return (uint64_t)-1;
+    }
+
+    uintptr_t consumed_file = 0;
+    uint32_t consumed_offset = 0;
+    uint8_t consumed_rights = 0;
+    if (!ipc_consume_initrd(descriptor->ipc_idx, descriptor->ipc_endpoint,
+                            &consumed_file, &consumed_offset,
+                            &consumed_rights) ||
+        consumed_file != transfer_file ||
+        consumed_offset != transfer_offset ||
+        consumed_rights != transfer_rights) {
+        return (uint64_t)-1;
+    }
+
+    if (file) {
+        task_fd_t *received = &current->fds[new_fd];
+        received->used = 1;
+        received->src = TFD_INITRD;
+        received->flags = BKFS_O_RDONLY;
+        received->offset = transfer_offset;
+        received->file = file;
+        received->bkfs_inode = -1;
+        received->pipe_idx = -1;
+        received->sock_idx = -1;
+        received->tcp_idx = -1;
+        received->ipc_idx = -1;
+        received->ipc_endpoint = 0;
+        received->ipc_rights = 0;
+        received->file_rights = transfer_rights;
     }
     sched_wake_blocked();
     return (uint64_t)result;
@@ -1327,6 +1439,12 @@ uint64_t syscall_dispatch(uint64_t sp) {
     if (nr == SYS_IPC_RECV_ENDPOINT)
         ret = sys_ipc_recv_endpoint((int)a0, (void *)a1, a2,
                                     (int *)a3, (uint32_t *)a4);
+    if (nr == SYS_IPC_SEND_FILE)
+        ret = sys_ipc_send_file((int)a0, (const void *)a1, a2,
+                                (int)a3, a4);
+    if (nr == SYS_IPC_RECV_FILE)
+        ret = sys_ipc_recv_file((int)a0, (void *)a1, a2,
+                                (int *)a3, (uint32_t *)a4);
     if (nr == SYS_DUP2)     ret = sys_dup2((int)a0, (int)a1);
     if (nr == SYS_SOCKET)   ret = sys_socket((int)a0, (int)a1, (int)a2);
     if (nr == SYS_BIND)     ret = sys_bind((int)a0, (uint16_t)a1);

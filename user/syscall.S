@@ -22,6 +22,8 @@
 .global ipc_recv_wait
 .global ipc_send_endpoint
 .global ipc_recv_endpoint
+.global ipc_send_file
+.global ipc_recv_file
 .global ipc_map
 .global dup2
 .global socket
@@ -138,6 +140,16 @@ ipc_send_endpoint:
 
 ipc_recv_endpoint:
     mov x8, #35
+    svc #0
+    ret
+
+ipc_send_file:
+    mov x8, #38
+    svc #0
+    ret
+
+ipc_recv_file:
+    mov x8, #39
     svc #0
     ret
 

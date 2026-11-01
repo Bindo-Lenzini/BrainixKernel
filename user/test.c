@@ -315,6 +315,51 @@ int main(int argc, char **argv) {
             }
             close(received_endpoint);
 
+            int received_file = -1;
+            unsigned int received_file_rights = 0;
+            char file_message[16];
+            long invalid_file_rights_output = IPC_EAGAIN;
+            for (int i = 0; i < 10000 &&
+                 invalid_file_rights_output == IPC_EAGAIN; i++) {
+                invalid_file_rights_output = ipc_recv_file(
+                    ipc_fds[1], file_message, sizeof(file_message),
+                    &received_file,
+                    (unsigned int *)(uintptr_t)0x20000000ULL);
+                if (invalid_file_rights_output == IPC_EAGAIN) yield();
+            }
+            long plain_file_receive = ipc_recv(
+                ipc_fds[1], file_message, sizeof(file_message));
+            long endpoint_file_receive = ipc_recv_endpoint(
+                ipc_fds[1], file_message, sizeof(file_message),
+                &received_endpoint, &received_rights);
+            long file_received = IPC_EAGAIN;
+            for (int i = 0; i < 10000 && file_received == IPC_EAGAIN; i++) {
+                file_received = ipc_recv_file(
+                    ipc_fds[1], file_message, sizeof(file_message),
+                    &received_file, &received_file_rights);
+                if (file_received == IPC_EAGAIN) yield();
+            }
+            char delegated_file_data[32];
+            long delegated_file_read = received_file >= 0
+                ? read(received_file, delegated_file_data,
+                       sizeof(delegated_file_data))
+                : -1;
+            if (invalid_file_rights_output != -1 ||
+                plain_file_receive != -1 || endpoint_file_receive != -1 ||
+                file_received != 5 || memcmp(file_message, "file", 5) != 0 ||
+                received_file < 0 ||
+                received_file_rights != FD_RIGHT_READ ||
+                delegated_file_read <= 0 ||
+                write(received_file, "x", 1) != -1 ||
+                fd_restrict(received_file, FD_RIGHT_READ | FD_RIGHT_WRITE) !=
+                    -1 ||
+                ipc_send_file(ipc_fds[1], "x", 2, received_file,
+                              FD_RIGHT_READ) != -1) {
+                puts("[ipc child] delegated file capability failed");
+                exit(34);
+            }
+            close(received_file);
+
             char request[IPC_MESSAGE_MAX];
             long received = IPC_EAGAIN;
             for (int i = 0; i < 10000 && received == IPC_EAGAIN; i++) {
@@ -359,6 +404,19 @@ int main(int argc, char **argv) {
                      memcmp(transfer_response, "granted", 8) == 0;
             if (!ipc_ok) puts("[ipc] delegated endpoint was not usable");
             close(transfer_fds[0]);
+
+            int file_fd = open("hello.txt", O_RDONLY);
+            long file_escalation = file_fd >= 0
+                ? ipc_send_file(ipc_fds[0], "file", 5, file_fd,
+                                FD_RIGHT_ALL)
+                : -1;
+            long file_sent = file_fd >= 0
+                ? ipc_send_file(ipc_fds[0], "file", 5, file_fd,
+                                FD_RIGHT_READ)
+                : -1;
+            if (file_fd >= 0) close(file_fd);
+            ipc_ok = ipc_ok && file_escalation == -1 && file_sent == 5;
+            if (!ipc_ok) puts("[ipc] delegated read-only file send failed");
 
             long sent = ipc_send(ipc_fds[0], "hello", 6);
             ipc_ok = ipc_ok && sent == 6;

@@ -8,6 +8,9 @@ typedef struct {
     int transfer_idx;
     uint8_t transfer_endpoint;
     uint8_t transfer_rights;
+    uint8_t transfer_type;
+    uintptr_t transfer_file;
+    uint32_t transfer_offset;
     uint8_t data[IPC_MESSAGE_MAX];
 } ipc_message_t;
 
@@ -36,12 +39,15 @@ static void release_channel(ipc_channel_t *channel) {
         for (uint8_t i = 0; i < queue->count; i++) {
             uint8_t slot = (uint8_t)((queue->head + i) % IPC_QUEUE_DEPTH);
             ipc_message_t *message = &queue->messages[slot];
-            if (message->transfer_idx >= 0) {
+            if (message->transfer_type == IPC_TRANSFER_ENDPOINT) {
                 transfers[transfer_count] = message->transfer_idx;
                 endpoints[transfer_count++] = message->transfer_endpoint;
-                message->transfer_idx = -1;
-                message->transfer_rights = 0;
             }
+            message->transfer_idx = -1;
+            message->transfer_rights = 0;
+            message->transfer_type = IPC_TRANSFER_NONE;
+            message->transfer_file = 0;
+            message->transfer_offset = 0;
         }
     }
     if (channel->shared_page) phys_free_page(channel->shared_page);
@@ -102,8 +108,12 @@ int ipc_alloc(void) {
         for (int endpoint = 0; endpoint < 2; endpoint++) {
             channel->inbox[endpoint].head = 0;
             channel->inbox[endpoint].count = 0;
-            for (int slot = 0; slot < IPC_QUEUE_DEPTH; slot++)
+            for (int slot = 0; slot < IPC_QUEUE_DEPTH; slot++) {
                 channel->inbox[endpoint].messages[slot].transfer_idx = -1;
+                channel->inbox[endpoint].messages[slot].transfer_type =
+                    IPC_TRANSFER_NONE;
+                channel->inbox[endpoint].messages[slot].transfer_endpoint = 0;
+            }
         }
         return i;
     }
@@ -136,17 +146,24 @@ void ipc_close(int idx, uint8_t endpoint) {
 
 static int send_message(int idx, uint8_t endpoint, const void *message,
                         uint32_t len, int transfer_idx,
-                        uint8_t transfer_endpoint, uint8_t transfer_rights) {
+                        uint8_t transfer_endpoint, uint8_t transfer_rights,
+                        uint8_t transfer_type, uintptr_t transfer_file,
+                        uint32_t transfer_offset) {
     if (!valid_endpoint(idx, endpoint) || !message ||
         len == 0 || len > IPC_MESSAGE_MAX) {
         return -1;
     }
-    if (transfer_idx >= 0 &&
-        (transfer_idx == idx || transfer_endpoint >= 2 ||
-         !valid_endpoint(transfer_idx, transfer_endpoint) ||
-         transfer_rights == 0 ||
-         (transfer_rights & ~IPC_RIGHT_ALL) != 0 ||
-         has_transfer_path(transfer_idx, idx))) {
+    if (transfer_type == IPC_TRANSFER_ENDPOINT) {
+        if (transfer_idx < 0 || transfer_idx == idx ||
+            transfer_endpoint >= 2 ||
+            !valid_endpoint(transfer_idx, transfer_endpoint) ||
+            transfer_rights == 0 ||
+            (transfer_rights & ~IPC_RIGHT_ALL) != 0 ||
+            has_transfer_path(transfer_idx, idx)) return -1;
+    } else if (transfer_type == IPC_TRANSFER_INITRD) {
+        if (transfer_file == 0 || transfer_rights == 0 ||
+            (transfer_rights & ~IPC_FILE_RIGHT_ALL) != 0) return -1;
+    } else if (transfer_type != IPC_TRANSFER_NONE || transfer_idx >= 0) {
         return -1;
     }
 
@@ -156,7 +173,7 @@ static int send_message(int idx, uint8_t endpoint, const void *message,
 
     ipc_queue_t *queue = &channel->inbox[peer];
     if (queue->count == IPC_QUEUE_DEPTH) return IPC_EAGAIN;
-    if (transfer_idx >= 0 &&
+    if (transfer_type == IPC_TRANSFER_ENDPOINT &&
         g_channels[transfer_idx].refs[transfer_endpoint] == UINT16_MAX)
         return -1;
 
@@ -167,14 +184,20 @@ static int send_message(int idx, uint8_t endpoint, const void *message,
     entry->len = (uint16_t)len;
     entry->transfer_idx = transfer_idx;
     entry->transfer_endpoint = transfer_endpoint;
-    entry->transfer_rights = transfer_idx >= 0 ? transfer_rights : 0;
-    if (transfer_idx >= 0) ipc_ref(transfer_idx, transfer_endpoint);
+    entry->transfer_rights = transfer_type != IPC_TRANSFER_NONE
+        ? transfer_rights : 0;
+    entry->transfer_type = transfer_type;
+    entry->transfer_file = transfer_file;
+    entry->transfer_offset = transfer_offset;
+    if (transfer_type == IPC_TRANSFER_ENDPOINT)
+        ipc_ref(transfer_idx, transfer_endpoint);
     queue->count++;
     return (int)len;
 }
 
 int ipc_send(int idx, uint8_t endpoint, const void *message, uint32_t len) {
-    return send_message(idx, endpoint, message, len, -1, 0, 0);
+    return send_message(idx, endpoint, message, len, -1, 0, 0,
+                        IPC_TRANSFER_NONE, 0, 0);
 }
 
 int ipc_send_endpoint(int idx, uint8_t endpoint, const void *message,
@@ -182,7 +205,15 @@ int ipc_send_endpoint(int idx, uint8_t endpoint, const void *message,
                       uint8_t transfer_endpoint, uint8_t transfer_rights) {
     if (transfer_idx < 0) return -1;
     return send_message(idx, endpoint, message, len, transfer_idx,
-                        transfer_endpoint, transfer_rights);
+                        transfer_endpoint, transfer_rights,
+                        IPC_TRANSFER_ENDPOINT, 0, 0);
+}
+
+int ipc_send_initrd(int idx, uint8_t endpoint, const void *message,
+                    uint32_t len, uintptr_t file, uint32_t offset,
+                    uint8_t transfer_rights) {
+    return send_message(idx, endpoint, message, len, -1, 0, transfer_rights,
+                        IPC_TRANSFER_INITRD, file, offset);
 }
 
 int ipc_peek_endpoint(int idx, uint8_t endpoint, void *message,
@@ -197,14 +228,41 @@ int ipc_peek_endpoint(int idx, uint8_t endpoint, void *message,
     }
 
     ipc_message_t *entry = &queue->messages[queue->head];
+    if (entry->transfer_type == IPC_TRANSFER_INITRD) return -1;
     if (capacity < entry->len) return -1;
     uint8_t *dst = (uint8_t *)message;
     for (uint16_t i = 0; i < entry->len; i++) dst[i] = entry->data[i];
-    if (transfer_idx) *transfer_idx = entry->transfer_idx;
+    if (transfer_idx)
+        *transfer_idx = entry->transfer_type == IPC_TRANSFER_ENDPOINT
+            ? entry->transfer_idx : -1;
     if (transfer_endpoint)
         *transfer_endpoint = entry->transfer_endpoint;
     if (transfer_rights)
-        *transfer_rights = entry->transfer_rights;
+        *transfer_rights = entry->transfer_type == IPC_TRANSFER_ENDPOINT
+            ? entry->transfer_rights : 0;
+    return entry->len;
+}
+
+int ipc_peek_initrd(int idx, uint8_t endpoint, void *message,
+                    uint32_t capacity, uintptr_t *file, uint32_t *offset,
+                    uint8_t *transfer_rights) {
+    if (!valid_endpoint(idx, endpoint) || !message) return -1;
+    ipc_queue_t *queue = &g_channels[idx].inbox[endpoint];
+    if (queue->count == 0) {
+        return g_channels[idx].refs[endpoint ^ 1u] == 0 ? 0 : IPC_EAGAIN;
+    }
+
+    ipc_message_t *entry = &queue->messages[queue->head];
+    if (entry->transfer_type == IPC_TRANSFER_ENDPOINT ||
+        capacity < entry->len) return -1;
+    uint8_t *dst = (uint8_t *)message;
+    for (uint16_t i = 0; i < entry->len; i++) dst[i] = entry->data[i];
+    if (file) *file = entry->transfer_type == IPC_TRANSFER_INITRD
+        ? entry->transfer_file : 0;
+    if (offset) *offset = entry->transfer_offset;
+    if (transfer_rights)
+        *transfer_rights = entry->transfer_type == IPC_TRANSFER_INITRD
+            ? entry->transfer_rights : 0;
     return entry->len;
 }
 
@@ -225,6 +283,30 @@ int ipc_consume(int idx, uint8_t endpoint) {
     return result;
 }
 
+int ipc_consume_initrd(int idx, uint8_t endpoint, uintptr_t *file,
+                       uint32_t *offset, uint8_t *transfer_rights) {
+    if (!valid_endpoint(idx, endpoint)) return 0;
+    ipc_queue_t *queue = &g_channels[idx].inbox[endpoint];
+    if (queue->count == 0) return 0;
+    ipc_message_t *message = &queue->messages[queue->head];
+    if (message->transfer_type == IPC_TRANSFER_ENDPOINT) return 0;
+    if (file) *file = message->transfer_type == IPC_TRANSFER_INITRD
+        ? message->transfer_file : 0;
+    if (offset) *offset = message->transfer_offset;
+    if (transfer_rights)
+        *transfer_rights = message->transfer_type == IPC_TRANSFER_INITRD
+            ? message->transfer_rights : 0;
+    message->transfer_idx = -1;
+    message->transfer_endpoint = 0;
+    message->transfer_rights = 0;
+    message->transfer_type = IPC_TRANSFER_NONE;
+    message->transfer_file = 0;
+    message->transfer_offset = 0;
+    queue->head = (uint8_t)((queue->head + 1) % IPC_QUEUE_DEPTH);
+    queue->count--;
+    return 1;
+}
+
 int ipc_consume_endpoint(int idx, uint8_t endpoint, int *transfer_idx,
                          uint8_t *transfer_endpoint,
                          uint8_t *transfer_rights) {
@@ -233,15 +315,23 @@ int ipc_consume_endpoint(int idx, uint8_t endpoint, int *transfer_idx,
     if (queue->count == 0) return 0;
 
     ipc_message_t *message = &queue->messages[queue->head];
-    if (message->transfer_idx >= 0 &&
+    if (message->transfer_type == IPC_TRANSFER_INITRD) return 0;
+    if (message->transfer_type == IPC_TRANSFER_ENDPOINT &&
         (!transfer_idx || !transfer_endpoint)) return 0;
-    if (transfer_idx) *transfer_idx = message->transfer_idx;
+    if (transfer_idx)
+        *transfer_idx = message->transfer_type == IPC_TRANSFER_ENDPOINT
+            ? message->transfer_idx : -1;
     if (transfer_endpoint)
         *transfer_endpoint = message->transfer_endpoint;
     if (transfer_rights)
-        *transfer_rights = message->transfer_rights;
+        *transfer_rights = message->transfer_type == IPC_TRANSFER_ENDPOINT
+            ? message->transfer_rights : 0;
     message->transfer_idx = -1;
+    message->transfer_endpoint = 0;
     message->transfer_rights = 0;
+    message->transfer_type = IPC_TRANSFER_NONE;
+    message->transfer_file = 0;
+    message->transfer_offset = 0;
     queue->head = (uint8_t)((queue->head + 1) % IPC_QUEUE_DEPTH);
     queue->count--;
     return 1;

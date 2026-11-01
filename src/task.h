@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include "elf.h"
 #include "cred.h"
+#include "ipc.h"
 
 #define TASK_NAME_MAX   16
 #define TASK_STACK_SIZE 8192
@@ -25,9 +26,10 @@
 #define TFD_TCP         6
 #define TFD_IPC         7
 
-#define FD_RIGHT_READ   0x01
-#define FD_RIGHT_WRITE  0x02
-#define FD_RIGHT_ALL    (FD_RIGHT_READ | FD_RIGHT_WRITE)
+#define FD_RIGHT_READ     IPC_FILE_RIGHT_READ
+#define FD_RIGHT_WRITE    IPC_FILE_RIGHT_WRITE
+#define FD_RIGHT_DELEGATE IPC_FILE_RIGHT_DELEGATE
+#define FD_RIGHT_ALL      IPC_FILE_RIGHT_ALL
 
 typedef struct {
     int      used;

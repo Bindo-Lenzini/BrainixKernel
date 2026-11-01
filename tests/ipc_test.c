@@ -180,11 +180,24 @@ int main(void) {
     ipc_ref(capability, 0);
     ipc_ref(capability, 1);
     const char transfer_payload[] = "cap";
+    uintptr_t received_file = 0;
+    uint32_t received_offset = 0;
+    uint8_t received_file_rights = 0;
     passed &= check(ipc_send_endpoint(carrier, 0, transfer_payload,
                                       sizeof(transfer_payload),
                                       capability, 0, IPC_RIGHT_SEND) ==
                         (int)sizeof(transfer_payload),
                     "message can carry an IPC endpoint reference");
+    received_file = 0;
+    received_offset = 0;
+    received_file_rights = 0;
+    passed &= check(ipc_peek_initrd(carrier, 1, received, sizeof(received),
+                                    &received_file, &received_offset,
+                                    &received_file_rights) == -1 &&
+                    ipc_consume_initrd(carrier, 1, &received_file,
+                                       &received_offset,
+                                       &received_file_rights) == 0,
+                    "file receivers cannot consume endpoint capabilities");
     passed &= check(ipc_send_endpoint(carrier, 0, transfer_payload,
                                       sizeof(transfer_payload),
                                       capability, 0, 0) == -1 &&
@@ -248,5 +261,62 @@ int main(void) {
     ipc_close(cleanup_carrier, 1);
     passed &= check(active_pages() == 0,
                     "discarding a channel releases queued endpoint references");
+
+    int file_carrier = ipc_alloc();
+    if (file_carrier < 0) {
+        fprintf(stderr, "FAIL: file-capability fixture allocation\n");
+        return 1;
+    }
+    ipc_ref(file_carrier, 0);
+    ipc_ref(file_carrier, 1);
+    const uintptr_t file_token = 0x1000;
+    const uint32_t file_offset = 7;
+    passed &= check(ipc_send_initrd(file_carrier, 0, transfer_payload,
+                                    sizeof(transfer_payload), file_token,
+                                    file_offset,
+                                    IPC_FILE_RIGHT_READ) ==
+                        (int)sizeof(transfer_payload),
+                    "message can carry a restricted initrd file capability");
+    passed &= check(ipc_send_initrd(file_carrier, 0, transfer_payload,
+                                    sizeof(transfer_payload), file_token, 0,
+                                    0) == -1 &&
+                    ipc_send_initrd(file_carrier, 0, transfer_payload,
+                                    sizeof(transfer_payload), file_token, 0,
+                                    IPC_FILE_RIGHT_ALL + 1) == -1,
+                    "initrd transfer rejects empty and unknown rights");
+    transferred_idx = -1;
+    transferred_endpoint = 0;
+    transferred_rights = 0;
+    passed &= check(ipc_peek(file_carrier, 1, received, sizeof(received)) ==
+                        -1 &&
+                    ipc_peek_endpoint(file_carrier, 1, received,
+                                      sizeof(received), &transferred_idx,
+                                      &transferred_endpoint,
+                                      &transferred_rights) == -1 &&
+                    ipc_consume_endpoint(file_carrier, 1, &transferred_idx,
+                                         &transferred_endpoint,
+                                         &transferred_rights) == 0,
+                    "endpoint receivers cannot consume file capabilities");
+    passed &= check(ipc_peek_initrd(file_carrier, 1, received,
+                                    sizeof(received), &received_file,
+                                    &received_offset,
+                                    &received_file_rights) ==
+                        (int)sizeof(transfer_payload) &&
+                    received_file == file_token &&
+                    received_offset == file_offset &&
+                    received_file_rights == IPC_FILE_RIGHT_READ &&
+                    memcmp(received, transfer_payload,
+                           sizeof(transfer_payload)) == 0 &&
+                    ipc_consume_initrd(file_carrier, 1, &received_file,
+                                       &received_offset,
+                                       &received_file_rights) &&
+                    received_file == file_token &&
+                    received_offset == file_offset &&
+                    received_file_rights == IPC_FILE_RIGHT_READ,
+                    "file capability metadata survives peek and ownership transfer");
+    ipc_close(file_carrier, 0);
+    ipc_close(file_carrier, 1);
+    passed &= check(active_pages() == 0,
+                    "file-capability channel teardown releases backing page");
     return passed ? 0 : 1;
 }
