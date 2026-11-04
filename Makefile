@@ -276,13 +276,19 @@ $(BUILD_DIR)/net_input_test: tests/net_input_test.c $(SRC_DIR)/ipv4.c \
 	    $(SRC_DIR)/udp.c \
 	    $(SRC_DIR)/tcp.c $(SRC_DIR)/socket.c $(HOST_GC_SECTIONS) -o $@
 
+$(BUILD_DIR)/virtio_blk_test: tests/virtio_blk_test.c \
+                              $(SRC_DIR)/virtio_blk.h \
+                              $(SRC_DIR)/virtio.h | $(BUILD_DIR)
+	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -I$(SRC_DIR) \
+	    tests/virtio_blk_test.c -o $@
+
 -include $(C_OBJS:.o=.d) $(GEN_OBJS:.o=.d)
 
 host-test: $(BUILD_DIR)/elf_test $(BUILD_DIR)/bkfs_test $(BUILD_DIR)/sched_test \
            $(BUILD_DIR)/mmu_cow_test $(BUILD_DIR)/ipc_test \
            $(BUILD_DIR)/tcp_recv_test $(BUILD_DIR)/pipe_recv_test \
            $(BUILD_DIR)/socket_rx_test $(BUILD_DIR)/physmem_test \
-           $(BUILD_DIR)/net_input_test
+           $(BUILD_DIR)/net_input_test $(BUILD_DIR)/virtio_blk_test
 	$(BUILD_DIR)/elf_test
 	$(BUILD_DIR)/bkfs_test
 	$(BUILD_DIR)/sched_test
@@ -293,6 +299,7 @@ host-test: $(BUILD_DIR)/elf_test $(BUILD_DIR)/bkfs_test $(BUILD_DIR)/sched_test 
 	$(BUILD_DIR)/socket_rx_test
 	$(BUILD_DIR)/physmem_test
 	$(BUILD_DIR)/net_input_test
+	$(BUILD_DIR)/virtio_blk_test
 
 clean:
 	rm -rf $(BUILD_DIR)

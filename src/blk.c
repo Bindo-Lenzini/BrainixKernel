@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include "blk.h"
 #include "virtio.h"
+#include "virtio_blk.h"
 #include "pci.h"
 #include "physmem.h"
 #include "mmu.h"
@@ -44,6 +45,7 @@ typedef struct {
     uint8_t      *hdr_buf;
     uint8_t      *sts_buf;
     uint8_t      *dat_buf;
+    uint16_t      last_used;
 } blk_dev_t;
 
 static blk_dev_t g_devs[BLK_MAX_DEV];
@@ -70,6 +72,7 @@ int blk_init_nth(uint64_t ecam_base, int skip) {
     virtio_transport_init(&dev->io, &st);
     if (!virtio_set_features(&dev->io, VIRTIO_F_VERSION_1, &st)) return 0;
     if (!virtio_setup_queue(&dev->io, 0, &dev->vq)) return 0;
+    if (dev->vq.queue_size < 3) return 0;
     if (!virtio_activate(&dev->io, &st)) return 0;
 
     dev->hdr_buf = (uint8_t *)phys_alloc_page();
@@ -78,6 +81,8 @@ int blk_init_nth(uint64_t ecam_base, int skip) {
     if (!dev->hdr_buf || !dev->sts_buf || !dev->dat_buf) return 0;
 
     dev->capacity = *(volatile uint64_t *)(dev->io.device + 0);
+    if (dev->capacity == 0) return 0;
+    dev->last_used = dev->vq.used->idx;
     dev->ready = 1;
 
     g_dev_count++;
@@ -102,7 +107,15 @@ static int blk_do(int dev_idx, uint32_t type, uint64_t sector,
 {
     if (dev_idx < 0 || dev_idx >= g_dev_count) return 0;
     blk_dev_t *dev = &g_devs[dev_idx];
-    if (!dev->ready) return 0;
+    if (!dev->ready || !buf || sector >= dev->capacity) return 0;
+
+    cache_invalidate(dev->vq.used, sizeof(virtq_used_t));
+    if (dev->vq.used->idx != dev->last_used ||
+        dev->vq.avail->idx != dev->last_used) {
+        uart_puts("  [blk] queue state out of sync; device disabled\n");
+        dev->ready = 0;
+        return 0;
+    }
 
     virtio_blk_req_t *hdr = (virtio_blk_req_t *)dev->hdr_buf;
     hdr->type     = type;
@@ -141,15 +154,35 @@ static int blk_do(int dev_idx, uint32_t type, uint64_t sector,
     virtio_queue_notify(&dev->io, &dev->vq);
 
     uint64_t t = 20000000;
+    uint16_t used_idx = dev->last_used;
     while (t > 0) {
         cache_invalidate(dev->vq.used, sizeof(virtq_used_t));
-        if (dev->vq.used->idx == aidx + 1) break;
+        used_idx = dev->vq.used->idx;
+        if (used_idx != dev->last_used) break;
         t--;
     }
-    if (t == 0) return 0;
+    if (t == 0) {
+        uart_puts("  [blk] request timeout; device disabled\n");
+        dev->ready = 0;
+        return 0;
+    }
+
+    uint16_t used_slot = (uint16_t)((uint16_t)(used_idx - 1) %
+                                    dev->vq.queue_size);
+    uint32_t used_id = dev->vq.used->ring[used_slot].id;
+    uint32_t used_len = dev->vq.used->ring[used_slot].len;
 
     cache_invalidate(dev->sts_buf, 1);
-    if (*dev->sts_buf != 0) return 0;
+    uint8_t status = *dev->sts_buf;
+    if (!virtio_blk_completion_valid(dev->last_used, used_idx,
+                                     dev->vq.queue_size, used_id, used_len,
+                                     status, is_write)) {
+        uart_puts("  [blk] invalid request completion; device disabled\n");
+        dev->ready = 0;
+        return 0;
+    }
+    dev->last_used = used_idx;
+    if (status != VIRTIO_BLK_STATUS_OK) return 0;
 
     if (!is_write) {
         cache_invalidate(dev->dat_buf, 512);
