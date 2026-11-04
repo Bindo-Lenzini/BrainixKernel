@@ -86,6 +86,7 @@ static void mem_zero(void *p, uint64_t bytes) {
 static virtio_mmio_t g_io;
 static virtqueue_t   g_cq;
 static int           g_ready = 0;
+static uint16_t      g_last_used = 0;
 
 static uint8_t *g_cmd_buf  = 0;
 static uint8_t *g_resp_buf = 0;
@@ -97,7 +98,52 @@ static uint32_t  g_fb_h         = 0;
 static uint32_t  g_fb_pages     = 0;
 static uint32_t  g_resource_id  = 1;
 
+static int queue_state_valid(void) {
+    cache_invalidate(g_cq.used, sizeof(virtq_used_t));
+    if (g_cq.avail->idx == g_last_used &&
+        g_cq.used->idx == g_last_used) {
+        return 1;
+    }
+    uart_puts("  [gpu] control queue state out of sync; device disabled\n");
+    g_ready = 0;
+    return 0;
+}
+
+static int wait_response(void *resp, uint32_t resp_len) {
+    uint64_t timeout = 20000000;
+    uint16_t used_idx = g_last_used;
+    while (timeout > 0) {
+        cache_invalidate(g_cq.used, sizeof(virtq_used_t));
+        used_idx = g_cq.used->idx;
+        if (used_idx != g_last_used) break;
+        timeout--;
+    }
+    if (timeout == 0) {
+        uart_puts("  [gpu] command timeout; device disabled\n");
+        g_ready = 0;
+        return 0;
+    }
+
+    uint16_t slot = (uint16_t)((uint16_t)(used_idx - 1) %
+                               g_cq.queue_size);
+    uint32_t id = g_cq.used->ring[slot].id;
+    uint32_t len = g_cq.used->ring[slot].len;
+    if (!virtio_gpu_completion_valid(g_last_used, used_idx,
+                                     g_cq.queue_size, id, len, resp_len)) {
+        uart_puts("  [gpu] invalid command completion; device disabled\n");
+        g_ready = 0;
+        return 0;
+    }
+    g_last_used = used_idx;
+    cache_invalidate(resp, resp_len);
+    return 1;
+}
+
 static int send2(void *cmd, uint32_t cmd_len, void *resp, uint32_t resp_len) {
+    if (!g_ready || !cmd || !resp || cmd_len == 0 || cmd_len > PAGE_SIZE ||
+        resp_len < VIRTIO_GPU_CTRL_HDR_SIZE || resp_len > PAGE_SIZE ||
+        !queue_state_valid()) return 0;
+
     cache_clean(cmd, cmd_len);
     g_cq.desc[0].addr  = KVA_TO_PA(cmd);     g_cq.desc[0].len = cmd_len;
     g_cq.desc[0].flags = VIRTQ_DESC_F_NEXT;  g_cq.desc[0].next = 1;
@@ -113,20 +159,18 @@ static int send2(void *cmd, uint32_t cmd_len, void *resp, uint32_t resp_len) {
 
     virtio_queue_notify(&g_io, &g_cq);
 
-    uint64_t t = 20000000;
-    while (t > 0) {
-        cache_invalidate(g_cq.used, sizeof(virtq_used_t));
-        if (g_cq.used->idx == aidx + 1) break;
-        t--;
-    }
-    if (t == 0) return 0;
-    cache_invalidate(resp, resp_len);
-    return 1;
+    return wait_response(resp, resp_len);
 }
 
 static int send3(void *cmd, uint32_t cmd_len,
                  void *payload, uint32_t payload_len,
                  void *resp, uint32_t resp_len) {
+    if (!g_ready || !cmd || !payload || !resp || cmd_len == 0 ||
+        cmd_len > PAGE_SIZE || payload_len == 0 ||
+        resp_len < VIRTIO_GPU_CTRL_HDR_SIZE || resp_len > PAGE_SIZE ||
+        g_cq.queue_size < 3 ||
+        !queue_state_valid()) return 0;
+
     cache_clean(cmd, cmd_len);
     cache_clean(payload, payload_len);
     g_cq.desc[0].addr  = KVA_TO_PA(cmd);     g_cq.desc[0].len = cmd_len;
@@ -145,15 +189,7 @@ static int send3(void *cmd, uint32_t cmd_len,
 
     virtio_queue_notify(&g_io, &g_cq);
 
-    uint64_t t = 20000000;
-    while (t > 0) {
-        cache_invalidate(g_cq.used, sizeof(virtq_used_t));
-        if (g_cq.used->idx == aidx + 1) break;
-        t--;
-    }
-    if (t == 0) return 0;
-    cache_invalidate(resp, resp_len);
-    return 1;
+    return wait_response(resp, resp_len);
 }
 
 static int resp_ok(void) {
@@ -179,6 +215,9 @@ int gpu_init(uint64_t ecam_base) {
     virtio_transport_init(&g_io, &st);
     if (!virtio_set_features(&g_io, VIRTIO_F_VERSION_1, &st)) return 0;
     if (!virtio_setup_queue(&g_io, 0, &g_cq)) return 0;
+    if (g_cq.queue_size < 3) return 0;
+    cache_invalidate(g_cq.used, sizeof(virtq_used_t));
+    g_last_used = g_cq.used->idx;
     if (!virtio_activate(&g_io, &st)) return 0;
 
     g_ready = 1;
@@ -186,17 +225,20 @@ int gpu_init(uint64_t ecam_base) {
 }
 
 uint32_t *gpu_create_framebuffer(uint32_t w, uint32_t h) {
-    if (!g_ready) return 0;
+    uint32_t fb_pages;
+    uint32_t entries_pages;
+    if (!g_ready || !gpu_framebuffer_layout(w, h, &fb_pages,
+                                             &entries_pages)) return 0;
 
-    g_fb_w = w; g_fb_h = h;
-    g_fb_pages = (w * h * 4 + 4095) / 4096;
+    g_fb_w = w;
+    g_fb_h = h;
+    g_fb_pages = fb_pages;
 
     g_fb = (uint32_t *)phys_alloc_pages(g_fb_pages);
     if (!g_fb) return 0;
 
     g_cmd_buf  = (uint8_t *)phys_alloc_page();
     g_resp_buf = (uint8_t *)phys_alloc_page();
-    uint32_t entries_pages = (g_fb_pages * 16 + 4095) / 4096;
     g_entries  = (uint8_t *)phys_alloc_pages(entries_pages);
     if (!g_cmd_buf || !g_resp_buf || !g_entries) return 0;
 
@@ -248,31 +290,44 @@ uint32_t *gpu_create_framebuffer(uint32_t w, uint32_t h) {
 
 void gpu_flush_rect(int x, int y, int w, int h) {
     if (!g_ready || !g_fb || w <= 0 || h <= 0) return;
-    if (x < 0) { w += x; x = 0; }
-    if (y < 0) { h += y; y = 0; }
-    if (x + w > (int)g_fb_w) w = g_fb_w - x;
-    if (y + h > (int)g_fb_h) h = g_fb_h - y;
-    if (w <= 0 || h <= 0) return;
+    int64_t left = x;
+    int64_t top = y;
+    int64_t width = w;
+    int64_t height = h;
+    if (left < 0) { width += left; left = 0; }
+    if (top < 0) { height += top; top = 0; }
+    if (left >= g_fb_w || top >= g_fb_h ||
+        width <= 0 || height <= 0) return;
+    if (left + width > g_fb_w) width = g_fb_w - left;
+    if (top + height > g_fb_h) height = g_fb_h - top;
+    if (width <= 0 || height <= 0) return;
 
-    for (int i = 0; i < h; i++) {
-        uint8_t *row = (uint8_t*)g_fb + (y + i) * g_fb_w * 4 + x * 4;
-        cache_clean(row, w * 4);
+    uint32_t rect_x = (uint32_t)left;
+    uint32_t rect_y = (uint32_t)top;
+    uint32_t rect_w = (uint32_t)width;
+    uint32_t rect_h = (uint32_t)height;
+
+    for (uint32_t i = 0; i < rect_h; i++) {
+        uint64_t row_offset =
+            ((uint64_t)(rect_y + i) * g_fb_w + rect_x) * 4;
+        uint8_t *row = (uint8_t *)g_fb + row_offset;
+        cache_clean(row, (uint64_t)rect_w * 4);
     }
 
     mem_zero(g_cmd_buf, 4096);
     virtio_gpu_transfer_to_host_2d_t *tr = (virtio_gpu_transfer_to_host_2d_t *)g_cmd_buf;
     tr->hdr.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D;
-    tr->r.x = x; tr->r.y = y;
-    tr->r.width = w; tr->r.height = h;
-    tr->offset = ((uint64_t)y * g_fb_w + x) * 4;
+    tr->r.x = rect_x; tr->r.y = rect_y;
+    tr->r.width = rect_w; tr->r.height = rect_h;
+    tr->offset = ((uint64_t)rect_y * g_fb_w + rect_x) * 4;
     tr->resource_id = g_resource_id;
     if (!send2(tr, sizeof(*tr), g_resp_buf, 24)) return;
 
     mem_zero(g_cmd_buf, 4096);
     virtio_gpu_resource_flush_t *fl = (virtio_gpu_resource_flush_t *)g_cmd_buf;
     fl->hdr.type = VIRTIO_GPU_CMD_RESOURCE_FLUSH;
-    fl->r.x = x; fl->r.y = y;
-    fl->r.width = w; fl->r.height = h;
+    fl->r.x = rect_x; fl->r.y = rect_y;
+    fl->r.width = rect_w; fl->r.height = rect_h;
     fl->resource_id = g_resource_id;
     send2(fl, sizeof(*fl), g_resp_buf, 24);
 }
@@ -280,7 +335,7 @@ void gpu_flush_rect(int x, int y, int w, int h) {
 void gpu_flush(void) {
     if (!g_ready || !g_fb) return;
 
-    cache_clean(g_fb, g_fb_pages * 4096);
+    cache_clean(g_fb, (uint64_t)g_fb_pages * 4096);
 
     mem_zero(g_cmd_buf, 4096);
     virtio_gpu_transfer_to_host_2d_t *tr = (virtio_gpu_transfer_to_host_2d_t *)g_cmd_buf;

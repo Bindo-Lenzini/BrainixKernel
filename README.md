@@ -302,6 +302,16 @@ files. The service runs with the default unprivileged user credentials.
   completion metadata. The tests cover the pure validation policy; hardware
   timeout and fault injection are not yet available.
 
+### 2026-11-04 — VirtIO GPU queue and geometry validation
+
+- Validate single-command control-queue completions, used-ring IDs, and
+  response lengths. Timeouts or malformed completions disable the GPU queue
+  rather than reusing buffers while a device may still access them.
+- Check framebuffer dimension arithmetic before allocating backing pages, and
+  clip rectangle coordinates using widened signed arithmetic.
+- Add host tests for completion metadata and framebuffer layout boundaries.
+  They do not emulate a faulty GPU or test DMA cancellation.
+
 ## Build and run
 
 ### Requirements
@@ -366,7 +376,7 @@ snapshot; guest disk writes are not persisted to `disk.img`.
 
 | Check | What it covers |
 | --- | --- |
-| `make host-test` | ELF parser cases, BKFS permissions and malformed block-pointer rejection, scheduler reaper adoption/fallback and dead-orphan teardown, IPC capability/queue behavior, transactional TCP/pipe/UDP receives, bounded physical-page allocation, user mapping W^X alias tracking, COW and eager-clone rollback/permission preservation, ASID exhaustion/reuse, VirtIO RX and block used-ring validation, and an ASan/UBSan malformed IPv4/ICMP/UDP/TCP input corpus |
+| `make host-test` | ELF parser cases, BKFS permissions and malformed block-pointer rejection, scheduler reaper adoption/fallback and dead-orphan teardown, IPC capability/queue behavior, transactional TCP/pipe/UDP receives, bounded physical-page allocation, user mapping W^X alias tracking, COW and eager-clone rollback/permission preservation, ASID exhaustion/reuse, VirtIO RX, block, and GPU completion validation, and an ASan/UBSan malformed IPv4/ICMP/UDP/TCP input corpus |
 | `make smoke` | QEMU boot, console-server startup and shell input/output routed over IPC, kernel self-tests, credentials, BKFS user-file creation, `chmod`/`chown`, execute-bit denial, supplementary-group pointer/range/privilege checks, initrd write denial, invalid open flags, file descriptor rights attenuation across `dup2`/`fork`, read-only initrd capability transfer over IPC, user-pointer handling, pipe and IPC rollback, endpoint creation-policy validation, restricted endpoint operations and delegation, shared-page aliases across `fork`, IPC message exchange, COW isolation, 260 repeated `exec` and fork/wait cycles, and a faulted-child teardown check |
 | GitHub Actions | Host tests, kernel build, and the headless QEMU smoke target |
 

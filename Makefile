@@ -282,13 +282,19 @@ $(BUILD_DIR)/virtio_blk_test: tests/virtio_blk_test.c \
 	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -I$(SRC_DIR) \
 	    tests/virtio_blk_test.c -o $@
 
+$(BUILD_DIR)/virtio_gpu_test: tests/virtio_gpu_test.c \
+                              $(SRC_DIR)/gpu.h $(SRC_DIR)/virtio.h | $(BUILD_DIR)
+	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -I$(SRC_DIR) \
+	    tests/virtio_gpu_test.c -o $@
+
 -include $(C_OBJS:.o=.d) $(GEN_OBJS:.o=.d)
 
 host-test: $(BUILD_DIR)/elf_test $(BUILD_DIR)/bkfs_test $(BUILD_DIR)/sched_test \
            $(BUILD_DIR)/mmu_cow_test $(BUILD_DIR)/ipc_test \
            $(BUILD_DIR)/tcp_recv_test $(BUILD_DIR)/pipe_recv_test \
            $(BUILD_DIR)/socket_rx_test $(BUILD_DIR)/physmem_test \
-           $(BUILD_DIR)/net_input_test $(BUILD_DIR)/virtio_blk_test
+           $(BUILD_DIR)/net_input_test $(BUILD_DIR)/virtio_blk_test \
+           $(BUILD_DIR)/virtio_gpu_test
 	$(BUILD_DIR)/elf_test
 	$(BUILD_DIR)/bkfs_test
 	$(BUILD_DIR)/sched_test
@@ -300,6 +306,7 @@ host-test: $(BUILD_DIR)/elf_test $(BUILD_DIR)/bkfs_test $(BUILD_DIR)/sched_test 
 	$(BUILD_DIR)/physmem_test
 	$(BUILD_DIR)/net_input_test
 	$(BUILD_DIR)/virtio_blk_test
+	$(BUILD_DIR)/virtio_gpu_test
 
 clean:
 	rm -rf $(BUILD_DIR)
