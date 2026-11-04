@@ -267,7 +267,7 @@ $(BUILD_DIR)/physmem_test: tests/physmem_test.c $(SRC_DIR)/physmem.c \
 
 $(BUILD_DIR)/net_input_test: tests/net_input_test.c $(SRC_DIR)/ipv4.c \
                              $(SRC_DIR)/icmp.c $(SRC_DIR)/udp.c \
-                             $(SRC_DIR)/tcp.c \
+                             $(SRC_DIR)/tcp.c $(SRC_DIR)/virtio_net.h \
                              $(SRC_DIR)/socket.c | $(BUILD_DIR)
 	$(HOSTCC) -std=c11 -Wall -Wextra -Werror \
 	    -fsanitize=address,undefined -fno-omit-frame-pointer \

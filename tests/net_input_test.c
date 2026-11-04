@@ -7,6 +7,7 @@
 #include "socket.h"
 #include "tcp.h"
 #include "udp.h"
+#include "virtio_net.h"
 
 static int failures;
 static int checks;
@@ -68,6 +69,30 @@ int main(void) {
     uint8_t frame[1600];
     const uint8_t *ip = 0;
     uint32_t ip_len = 0;
+
+    check(vnet_used_pending(UINT16_MAX, 0) == 1,
+          "VirtIO used-index delta handles 16-bit wraparound");
+    check(vnet_rx_completion_valid(64, 64, 63, VNET_RX_HDR_SIZE + 1514,
+                                   1, 0),
+          "maximum-size RX completion with an in-flight descriptor is accepted");
+    check(!vnet_rx_completion_valid(65, 64, 0, VNET_RX_HDR_SIZE + 64, 1, 0),
+          "RX used-index advance beyond queue capacity is rejected");
+    check(!vnet_rx_completion_valid(1, 64, 64, VNET_RX_HDR_SIZE + 64, 1, 0),
+          "RX descriptor IDs outside the posted queue are rejected");
+    check(vnet_rx_completion_valid(1, 64, 0, VNET_RX_HDR_SIZE, 1, 0) &&
+          !vnet_rx_frame_length_valid(VNET_RX_HDR_SIZE, VNET_MAX_FRAME),
+          "header-only RX completions are dropped as empty frames");
+    check(!vnet_rx_completion_valid(1, 64, 0, VNET_RX_BUF_SIZE + 1, 1, 0),
+          "RX lengths beyond the DMA buffer are rejected");
+    check(vnet_rx_completion_valid(1, 64, 0, VNET_RX_HDR_SIZE + 1515,
+                                   1, 0) &&
+          !vnet_rx_frame_length_valid(VNET_RX_HDR_SIZE + 1515,
+                                      VNET_MAX_FRAME),
+          "oversized Ethernet frames are dropped without disabling RX");
+    check(!vnet_rx_completion_valid(2, 64, 0, VNET_RX_HDR_SIZE + 64, 0, 0),
+          "RX completions for descriptors not in flight are rejected");
+    check(!vnet_rx_completion_valid(2, 64, 0, VNET_RX_HDR_SIZE + 64, 1, 1),
+          "duplicate RX descriptor completions are rejected");
 
     make_ipv4_frame(frame, 20, 17);
     check(net_ipv4_packet_view(frame, 34, &ip, &ip_len) &&

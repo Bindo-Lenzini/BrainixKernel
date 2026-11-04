@@ -279,6 +279,18 @@ files. The service runs with the default unprivileged user credentials.
   synchronized for SMP, and multi-core boot stays disabled pending a complete
   lock-order design and race validation.
 
+### 2026-11-04 — VirtIO network receive validation
+
+- Bounded VirtIO RX used-ring advancement and validated descriptor IDs,
+  in-flight ownership, duplicate completions, and device-reported DMA lengths
+  before accessing receive buffers.
+- Dropped empty or oversized Ethernet frames and undersized caller buffers
+  without truncating packets; safely recycled valid descriptors. Invalid
+  queue completions disable RX instead of silently consuming buffers.
+- Added host regression coverage for used-index wraparound and malformed
+  completion metadata. These tests exercise validation logic, not faulty
+  physical devices or SMP behavior.
+
 ## Build and run
 
 ### Requirements
@@ -343,7 +355,7 @@ snapshot; guest disk writes are not persisted to `disk.img`.
 
 | Check | What it covers |
 | --- | --- |
-| `make host-test` | ELF parser cases, BKFS permissions and malformed block-pointer rejection, scheduler reaper adoption/fallback and dead-orphan teardown, IPC capability/queue behavior, transactional TCP/pipe/UDP receives, bounded physical-page allocation, user mapping W^X alias tracking, COW and eager-clone rollback/permission preservation, ASID exhaustion/reuse, and an ASan/UBSan malformed IPv4/UDP/TCP input corpus |
+| `make host-test` | ELF parser cases, BKFS permissions and malformed block-pointer rejection, scheduler reaper adoption/fallback and dead-orphan teardown, IPC capability/queue behavior, transactional TCP/pipe/UDP receives, bounded physical-page allocation, user mapping W^X alias tracking, COW and eager-clone rollback/permission preservation, ASID exhaustion/reuse, VirtIO RX used-ring validation, and an ASan/UBSan malformed IPv4/ICMP/UDP/TCP input corpus |
 | `make smoke` | QEMU boot, console-server startup and shell input/output routed over IPC, kernel self-tests, credentials, BKFS user-file creation, `chmod`/`chown`, execute-bit denial, supplementary-group pointer/range/privilege checks, initrd write denial, invalid open flags, file descriptor rights attenuation across `dup2`/`fork`, read-only initrd capability transfer over IPC, user-pointer handling, pipe and IPC rollback, endpoint creation-policy validation, restricted endpoint operations and delegation, shared-page aliases across `fork`, IPC message exchange, COW isolation, 260 repeated `exec` and fork/wait cycles, and a faulted-child teardown check |
 | GitHub Actions | Host tests, kernel build, and the headless QEMU smoke target |
 

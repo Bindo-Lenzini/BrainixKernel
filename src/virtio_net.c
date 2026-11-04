@@ -33,8 +33,8 @@ typedef struct __attribute__((packed)) {
     uint16_t num_buffers;
 } vnet_hdr_t;
 
-#define VNET_HDR_SIZE  12
-#define VNET_BUF_SIZE  2048
+#define VNET_HDR_SIZE VNET_RX_HDR_SIZE
+#define VNET_BUF_SIZE VNET_RX_BUF_SIZE
 
 #define C_Q_SELECT   0x16
 #define C_Q_SIZE     0x18
@@ -51,6 +51,8 @@ static virtqueue_t   g_txq;
 static int           g_ready = 0;
 
 static uint8_t  *g_rx_bufs[VNET_RX_BUFS];
+static uint8_t   g_rx_in_flight[VNET_RX_BUFS];
+static uint16_t  g_rx_count;
 static uint8_t  *g_tx_buf = 0;
 
 static uint16_t  g_rx_last_used = 0;
@@ -136,8 +138,28 @@ static void rx_push_avail(uint16_t id) {
     g_rxq.avail->idx = aidx + 1;
 }
 
+static int rx_post(uint16_t id) {
+    if (id >= g_rx_count || g_rx_in_flight[id]) return 0;
+    rx_refill_one(id);
+    g_rx_in_flight[id] = 1;
+    rx_push_avail(id);
+    cache_clean(g_rxq.desc, sizeof(virtq_desc_t) * g_rxq.queue_size);
+    cache_clean(g_rxq.avail, sizeof(virtq_avail_t));
+    virtio_queue_notify(&g_io, &g_rxq);
+    return 1;
+}
+
+static int rx_recycle(uint16_t id) {
+    if (rx_post(id)) return 1;
+    uart_puts("  [net] failed to repost RX descriptor; queue disabled\n");
+    g_ready = 0;
+    return 0;
+}
+
 int vnet_init(uint64_t ecam_base) {
     g_ready = 0;
+    g_rx_count = 0;
+    mem_zero(g_rx_in_flight, sizeof(g_rx_in_flight));
 
     int b, d, f;
     if (!pci_find_device(ecam_base, 0x1AF4, VIRTIO_NET_PCI_MODERN_ID,
@@ -218,11 +240,13 @@ int vnet_init(uint64_t ecam_base) {
 
     uint32_t n_rx = g_rxq.queue_size;
     if (n_rx > VNET_RX_BUFS) n_rx = VNET_RX_BUFS;
+    g_rx_count = (uint16_t)n_rx;
     for (uint32_t i = 0; i < n_rx; i++) {
         g_rx_bufs[i] = (uint8_t *)phys_alloc_page();
         if (!g_rx_bufs[i]) return 0;
         mem_zero(g_rx_bufs[i], VNET_BUF_SIZE);
         rx_refill_one((uint16_t)i);
+        g_rx_in_flight[i] = 1;
     }
 
     g_tx_buf = (uint8_t *)phys_alloc_page();
@@ -283,7 +307,7 @@ void vnet_get_mac(uint8_t *out) {
 }
 
 int vnet_send(const void *frame, uint32_t len) {
-    if (!g_ready) return 0;
+    if (!g_ready || !frame) return 0;
     if (len == 0 || len > VNET_MAX_FRAME) return 0;
 
     vnet_hdr_t *hdr = (vnet_hdr_t *)g_tx_buf;
@@ -326,41 +350,56 @@ int vnet_send(const void *frame, uint32_t len) {
 }
 
 int vnet_recv(void *frame, uint32_t max, uint32_t *out_len) {
-    if (!g_ready) return 0;
+    if (out_len) *out_len = 0;
+    if (!g_ready || !frame || max == 0) return 0;
 
     cache_invalidate(g_rxq.used, sizeof(virtq_used_t));
     uint16_t cur = g_rxq.used->idx;
-    if (cur == g_rx_last_used) return 0;
+    uint16_t pending = vnet_used_pending(g_rx_last_used, cur);
+    if (pending == 0) return 0;
+    if (pending > g_rxq.queue_size) {
+        uart_puts("  [net] invalid RX used index; queue disabled\n");
+        g_ready = 0;
+        return 0;
+    }
 
-    uint32_t got = 0;
+    uint64_t seen_ids = 0;
     while (g_rx_last_used != cur) {
-        uint32_t id  = g_rxq.used->ring[g_rx_last_used % g_rxq.queue_size].id;
-        uint32_t len = g_rxq.used->ring[g_rx_last_used % g_rxq.queue_size].len;
+        uint16_t slot = (uint16_t)(g_rx_last_used % g_rxq.queue_size);
+        uint32_t id = g_rxq.used->ring[slot].id;
+        uint32_t len = g_rxq.used->ring[slot].len;
         g_rx_last_used++;
 
-        if (id >= VNET_RX_BUFS) continue;
-        if (len <= VNET_HDR_SIZE) { rx_push_avail((uint16_t)id); continue; }
+        int seen = id < VNET_RX_BUFS &&
+                   (seen_ids & (1ull << id)) != 0;
+        if (!vnet_rx_completion_valid(pending, g_rxq.queue_size, id, len,
+                                      id < g_rx_count && g_rx_in_flight[id],
+                                      seen)) {
+            uart_puts("  [net] invalid RX completion; queue disabled\n");
+            g_ready = 0;
+            return 0;
+        }
+        seen_ids |= 1ull << id;
+        g_rx_in_flight[id] = 0;
+
+        if (!vnet_rx_frame_length_valid(len, VNET_MAX_FRAME) ||
+            len - VNET_HDR_SIZE > max) {
+            if (!rx_recycle((uint16_t)id)) return 0;
+            continue;
+        }
 
         uint8_t *buf = g_rx_bufs[id];
         cache_invalidate(buf, VNET_BUF_SIZE);
 
         uint32_t data_len = len - VNET_HDR_SIZE;
-        if (data_len > max) data_len = max;
-        if (data_len > VNET_MAX_FRAME) data_len = VNET_MAX_FRAME;
 
         const uint8_t *srcp = buf + VNET_HDR_SIZE;
         uint8_t *dstp = (uint8_t *)frame;
         for (uint32_t i = 0; i < data_len; i++) dstp[i] = srcp[i];
 
         if (out_len) *out_len = data_len;
-        got = 1;
-
-        rx_refill_one((uint16_t)id);
-        rx_push_avail((uint16_t)id);
-        cache_clean(g_rxq.desc,  sizeof(virtq_desc_t) * g_rxq.queue_size);
-        cache_clean(g_rxq.avail, sizeof(virtq_avail_t));
-        virtio_queue_notify(&g_io, &g_rxq);
-        break;
+        (void)rx_recycle((uint16_t)id);
+        return 1;
     }
-    return got;
+    return 0;
 }
